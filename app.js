@@ -130,6 +130,80 @@ function setupEventListeners() {
 
     imageBtn.addEventListener('click', () => imageInput.click());
     imageInput.addEventListener('change', handleImageSelect);
+
+    setupVoiceInput();
+}
+
+// ── Voice input ──
+
+function setupVoiceInput() {
+    const micBtn = document.getElementById('mic-btn');
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+        micBtn.disabled = true;
+        micBtn.title = 'Voice input not supported in this browser';
+        return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+
+    let isListening = false;
+    let interimStart = 0;
+
+    micBtn.addEventListener('click', () => {
+        if (isListening) {
+            recognition.stop();
+        } else {
+            recognition.start();
+        }
+    });
+
+    recognition.addEventListener('start', () => {
+        isListening = true;
+        micBtn.classList.add('recording');
+        micBtn.title = 'Recording… click to stop';
+        micBtn.setAttribute('aria-label', 'Stop voice input');
+        setStatus('Listening…');
+        interimStart = userInputEl.value.length;
+        if (interimStart > 0 && !userInputEl.value.endsWith(' ')) {
+            userInputEl.value += ' ';
+            interimStart = userInputEl.value.length;
+        }
+    });
+
+    recognition.addEventListener('result', e => {
+        const transcript = Array.from(e.results)
+            .map(r => r[0].transcript)
+            .join('');
+        userInputEl.value = userInputEl.value.slice(0, interimStart) + transcript;
+        userInputEl.style.height = 'auto';
+        userInputEl.style.height = userInputEl.scrollHeight + 'px';
+    });
+
+    recognition.addEventListener('end', () => {
+        isListening = false;
+        micBtn.classList.remove('recording');
+        micBtn.title = 'Voice input';
+        micBtn.setAttribute('aria-label', 'Start voice input');
+        setStatus('Ready');
+        userInputEl.focus();
+    });
+
+    recognition.addEventListener('error', e => {
+        isListening = false;
+        micBtn.classList.remove('recording');
+        micBtn.title = 'Voice input';
+        micBtn.setAttribute('aria-label', 'Start voice input');
+        const msg = e.error === 'not-allowed'
+            ? 'Microphone access denied'
+            : `Voice error: ${e.error}`;
+        setStatus(msg);
+        setTimeout(() => setStatus('Ready'), 3000);
+    });
 }
 
 function openSettings()  { applySettings(); settingsModal.classList.remove('hidden'); }
@@ -485,13 +559,17 @@ function scrollToBottom() {
     messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
+function setStatus(text) {
+    const statusEl = document.getElementById('status-text');
+    if (statusEl) statusEl.textContent = text;
+}
+
 function setBusy(on) {
     busy = on;
     sendBtn.disabled = on;
     userInputEl.disabled = on;
     imageBtn.disabled = on;
-    const statusEl = document.getElementById('status-text');
-    if (statusEl) statusEl.textContent = on ? 'Thinking...' : 'Ready';
+    setStatus(on ? 'Thinking...' : 'Ready');
 }
 
 // ── Markdown parser ──
