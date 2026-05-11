@@ -376,14 +376,32 @@ async function newChat() {
 
 // ── Image handling ──
 
+const IMAGE_MAX_PX  = 1024; // longest side cap before sending to API / saving
+const IMAGE_QUALITY = 0.82;  // JPEG compression quality (0–1)
+
+function compressImage(dataUrl) {
+    return new Promise(resolve => {
+        const img = new Image();
+        img.onload = () => {
+            const scale = Math.min(1, IMAGE_MAX_PX / Math.max(img.width, img.height));
+            const w = Math.round(img.width  * scale);
+            const h = Math.round(img.height * scale);
+            const canvas = document.createElement('canvas');
+            canvas.width  = w;
+            canvas.height = h;
+            canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+            const compressed = canvas.toDataURL('image/jpeg', IMAGE_QUALITY);
+            resolve({ dataUrl: compressed, base64: compressed.split(',')[1] });
+        };
+        img.src = dataUrl;
+    });
+}
+
 function handleImageSelect() {
     const files = Array.from(imageInput.files);
     const readers = files.map(file => new Promise(resolve => {
         const reader = new FileReader();
-        reader.onload = e => {
-            const dataUrl = e.target.result;
-            resolve({ dataUrl, base64: dataUrl.split(',')[1] });
-        };
+        reader.onload = e => compressImage(e.target.result).then(resolve);
         reader.readAsDataURL(file);
     }));
     Promise.all(readers).then(imgs => {
