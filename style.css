@@ -35,8 +35,7 @@
     --red:       #cc0000;
     --red-light: #ffcccc;
 
-    --header-h:  32px;
-    --toolbar-h: 44px;
+    --toolbar-h: 48px;
 }
 
 /* ── Dark mode ── */
@@ -83,78 +82,7 @@ body {
     box-shadow: 1px 1px 0 var(--bsh);
 }
 
-/* ── Win98 Title Bar ── */
-.win-titlebar {
-    flex-shrink: 0;
-    height: var(--header-h);
-    background: var(--title-grad);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 2px 4px 2px 6px;
-    gap: 4px;
-    user-select: none;
-}
-
-.win-titlebar-left {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex: 1;
-    min-width: 0;
-}
-
-.win-titlebar-icon {
-    width: 20px;
-    height: 20px;
-    image-rendering: pixelated;
-    flex-shrink: 0;
-}
-
-.win-titlebar-title {
-    color: var(--title-text);
-    font-size: 14px;
-    font-weight: bold;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    text-shadow: 1px 1px 0 rgba(0,0,0,0.4);
-}
-
-.win-titlebar-controls {
-    display: flex;
-    gap: 2px;
-    flex-shrink: 0;
-}
-
-.win-ctrl-btn {
-    width: 20px;
-    height: 18px;
-    background: #c0c0c0;
-    border-top:    1px solid #ffffff;
-    border-left:   1px solid #ffffff;
-    border-right:  1px solid #000000;
-    border-bottom: 1px solid #000000;
-    font-size: 11px;
-    line-height: 1;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #000000;
-    font-weight: bold;
-    padding: 0;
-    font-family: 'Tahoma', sans-serif;
-}
-
-.win-ctrl-btn:active {
-    border-top:    1px solid #000000;
-    border-left:   1px solid #000000;
-    border-right:  1px solid #ffffff;
-    border-bottom: 1px solid #ffffff;
-}
-
-/* ── Toolbar (functional buttons) ── */
+/* ── Header ── */
 header {
     flex-shrink: 0;
     height: var(--toolbar-h);
@@ -170,7 +98,22 @@ header {
 .header-left {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
+    min-width: 0;
+}
+
+.header-logo {
+    width: 24px;
+    height: 24px;
+    image-rendering: pixelated;
+    flex-shrink: 0;
+}
+
+.header-title {
+    font-size: 16px;
+    font-weight: bold;
+    color: var(--text);
+    white-space: nowrap;
 }
 
 .header-right {
