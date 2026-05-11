@@ -10,28 +10,34 @@
 
     <div class="layout">
 
+        <!-- Win98 Title Bar -->
+        <div class="win-titlebar">
+            <div class="win-titlebar-left">
+                <img src="icons/danGPT_logo.png" class="win-titlebar-icon" alt="">
+                <span class="win-titlebar-title">DanGPT</span>
+            </div>
+            <div class="win-titlebar-controls">
+                <button class="win-ctrl-btn win-ctrl-close" aria-label="Close" onclick="window.close()">&#x2715;</button>
+            </div>
+        </div>
+
+        <!-- Toolbar -->
         <header>
             <div class="header-left">
-                <h1>DanGPT</h1>
                 <span id="model-badge" class="model-badge"></span>
             </div>
             <div class="header-right">
                 <button id="chats-btn" class="icon-btn" title="Saved chats" aria-label="Saved chats">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
-                    </svg>
+                    <img src="icons/history.png" alt="" width="16" height="16">
                 </button>
-                <button id="dark-mode-btn" class="icon-btn" title="Toggle dark mode" aria-label="Toggle dark mode"></button>
+                <button id="dark-mode-btn" class="icon-btn" title="Toggle dark mode" aria-label="Toggle dark mode">
+                    <img src="icons/mode-dark.png" alt="" width="16" height="16">
+                </button>
                 <button id="clear-btn" class="icon-btn" title="New chat" aria-label="New chat">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-                    </svg>
+                    <img id="new-chat-icon" src="icons/new_chat_dark.png" alt="" width="16" height="16">
                 </button>
                 <button id="settings-btn" class="icon-btn" title="Settings" aria-label="Settings">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <circle cx="12" cy="12" r="3"/>
-                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-                    </svg>
+                    <img src="icons/settings.png" alt="" width="16" height="16">
                 </button>
             </div>
         </header>
@@ -39,29 +45,37 @@
         <!-- Settings modal -->
         <div id="settings-modal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Settings">
             <div class="modal-content">
-                <h2>Settings</h2>
-                <label for="tunnel-url">
-                    Cloudflare Tunnel URL
-                    <span class="label-hint">Same URL as your calorie logger tunnel</span>
-                    <input type="url" id="tunnel-url" placeholder="https://xxxx-xxxx.trycloudflare.com" autocomplete="off" spellcheck="false">
-                </label>
-                <label for="model-name">
-                    Ollama Model
-                    <input type="text" id="model-name" placeholder="llama3.2" autocomplete="off" spellcheck="false">
-                </label>
-                <label for="brave-api-key">
-                    Brave Search API Key
-                    <span class="label-hint">Optional — enables web search. Free key at brave.com/search/api</span>
-                    <input type="password" id="brave-api-key" placeholder="BSA..." autocomplete="off" spellcheck="false">
-                </label>
-                <label for="system-prompt">
-                    System Prompt
-                    <span class="label-hint">Defines how the assistant behaves</span>
-                    <textarea id="system-prompt" rows="6" placeholder="You are a helpful assistant..."></textarea>
-                </label>
-                <div class="modal-actions">
-                    <button id="save-settings" class="btn primary">Save</button>
-                    <button id="close-settings" class="btn">Cancel</button>
+                <div class="modal-titlebar">
+                    <span class="modal-titlebar-title">
+                        <img src="icons/settings.png" width="14" height="14" alt="">
+                        Settings
+                    </span>
+                    <button class="modal-titlebar-close" id="close-settings-x">&#x2715;</button>
+                </div>
+                <div class="modal-body">
+                    <label for="tunnel-url">
+                        Cloudflare Tunnel URL
+                        <span class="label-hint">Same URL as your calorie logger tunnel</span>
+                        <input type="url" id="tunnel-url" placeholder="https://xxxx-xxxx.trycloudflare.com" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label for="model-name">
+                        Ollama Model
+                        <input type="text" id="model-name" placeholder="llama3.2" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label for="brave-api-key">
+                        Brave Search API Key
+                        <span class="label-hint">Optional — enables web search. Free key at brave.com/search/api</span>
+                        <input type="password" id="brave-api-key" placeholder="BSA..." autocomplete="off" spellcheck="false">
+                    </label>
+                    <label for="system-prompt">
+                        System Prompt
+                        <span class="label-hint">Defines how the assistant behaves</span>
+                        <textarea id="system-prompt" rows="6" placeholder="You are a helpful assistant..."></textarea>
+                    </label>
+                    <div class="modal-actions">
+                        <button id="save-settings" class="btn primary">Save</button>
+                        <button id="close-settings" class="btn">Cancel</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -69,13 +83,23 @@
         <!-- Chats modal -->
         <div id="chats-modal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Saved chats">
             <div class="modal-content">
-                <div class="chats-header">
-                    <h2>Saved Chats</h2>
-                    <button id="new-chat-btn" class="btn primary">+ New Chat</button>
+                <div class="modal-titlebar">
+                    <span class="modal-titlebar-title">
+                        <img src="icons/history.png" width="14" height="14" alt="">
+                        Saved Chats
+                    </span>
+                    <button class="modal-titlebar-close" id="close-chats-x">&#x2715;</button>
                 </div>
-                <div id="chats-list" class="chats-list"></div>
-                <div class="modal-actions">
-                    <button id="close-chats" class="btn">Close</button>
+                <div class="modal-body">
+                    <div class="chats-header">
+                        <button id="new-chat-btn" class="btn">
+                            <img src="icons/new_chat_dark.png" width="13" height="13" alt="" id="new-chat-modal-icon"> New Chat
+                        </button>
+                    </div>
+                    <div id="chats-list" class="chats-list"></div>
+                    <div class="modal-actions">
+                        <button id="close-chats" class="btn">Close</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -84,7 +108,7 @@
         <main id="messages" class="messages" aria-live="polite" aria-label="Conversation">
             <div class="welcome" id="welcome">
                 <p>Start a conversation below.</p>
-                <p class="welcome-hint">Enter to send &nbsp;·&nbsp; Shift+Enter for new line</p>
+                <p class="welcome-hint">Enter to send &nbsp;&middot;&nbsp; Shift+Enter for new line</p>
             </div>
         </main>
 
@@ -94,11 +118,10 @@
             <div class="input-bar">
                 <input type="file" id="image-input" accept="image/*" multiple style="display:none">
                 <button id="image-btn" class="icon-btn" title="Attach image" aria-label="Attach image">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                        <circle cx="8.5" cy="8.5" r="1.5"/>
-                        <polyline points="21 15 16 10 5 21"/>
-                    </svg>
+                    <img src="icons/image_upload.png" alt="" width="16" height="16">
+                </button>
+<button class="icon-btn" title="Voice input" aria-label="Voice input">
+                    <img src="icons/microphone-0.png" alt="" width="16" height="16">
                 </button>
                 <textarea
                     id="user-input"
@@ -108,12 +131,16 @@
                     aria-label="Message input"
                 ></textarea>
                 <button id="send-btn" class="send-btn" aria-label="Send">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <line x1="22" y1="2" x2="11" y2="13"/>
-                        <polygon points="22 2 15 22 11 13 2 9 22 2"/>
-                    </svg>
+                    <img src="icons/send.png" alt="" width="14" height="14">
+                    Send
                 </button>
             </div>
+        </div>
+
+        <!-- Win98 Status Bar -->
+        <div class="win-statusbar">
+            <div class="win-statusbar-panel" id="status-text">Ready</div>
+            <div class="win-statusbar-panel win-statusbar-grow"></div>
         </div>
 
     </div>
