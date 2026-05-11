@@ -1,7 +1,6 @@
 'use strict';
 
-const SETTINGS_KEY = 'chat_settings_v1';
-const CHATS_KEY    = 'chat_history_v1';
+const SETTINGS_KEY  = 'chat_settings_v1';
 const LAST_CHAT_KEY = 'last_chat_id';
 
 const DEFAULT_SYSTEM_PROMPT = `You are a helpful, knowledgeable assistant. Answer clearly and concisely. Use markdown formatting where it helps readability — code blocks for code, bullet points for lists, bold for key terms.`;
@@ -43,14 +42,15 @@ let busy = false;
 let darkMode = localStorage.getItem('darkMode') === 'true';
 let pendingImages = []; // { dataUrl, base64 }
 let currentChatId = null;
+let currentChatCreatedAt = null;
 
 // ── Boot ──
 
-function init() {
+async function init() {
     applySettings();
     applyDarkMode();
     setupEventListeners();
-    restoreLastChat();
+    await restoreLastChat();
     userInputEl.focus();
 }
 
@@ -132,15 +132,6 @@ function closeSettings() { settingsModal.classList.add('hidden'); }
 
 // ── Chat history ──
 
-function loadChats() {
-    try { return JSON.parse(localStorage.getItem(CHATS_KEY)) || {}; }
-    catch { return {}; }
-}
-
-function saveChatsToStorage(chats) {
-    localStorage.setItem(CHATS_KEY, JSON.stringify(chats));
-}
-
 function generateChatId() {
     return 'chat_' + Date.now();
 }
@@ -152,63 +143,81 @@ function getChatTitle() {
     return text.length > 45 ? text.slice(0, 42) + '...' : text;
 }
 
-function saveCurrentChat() {
-    if (messages.length === 0) return;
-    const chats = loadChats();
-    if (!currentChatId) currentChatId = generateChatId();
-    const existing = chats[currentChatId];
-    chats[currentChatId] = {
-        id: currentChatId,
-        title: getChatTitle(),
-        createdAt: existing ? existing.createdAt : Date.now(),
-        updatedAt: Date.now(),
-        messages: messages.slice()
-    };
-    saveChatsToStorage(chats);
-    localStorage.setItem(LAST_CHAT_KEY, currentChatId);
-}
-
-function loadChat(id) {
-    const chats = loadChats();
-    const chat = chats[id];
-    if (!chat) return;
-    saveCurrentChat();
-    currentChatId = chat.id;
-    messages = chat.messages.slice();
-    localStorage.setItem(LAST_CHAT_KEY, currentChatId);
-    messagesEl.innerHTML = '';
-    messagesEl.appendChild(welcomeEl);
-    if (messages.length === 0) {
-        welcomeEl.classList.remove('hidden');
-    } else {
-        welcomeEl.classList.add('hidden');
-        messages.forEach(m => appendMessage(m.role, m.content, m.imageUrls || []));
+async function saveCurrentChat() {
+    if (messages.length === 0 || !settings.tunnelUrl) return;
+    if (!currentChatId) {
+        currentChatId = generateChatId();
+        currentChatCreatedAt = Date.now();
     }
-    closeChatsPanel();
-    userInputEl.focus();
+    try {
+        await fetch(`${settings.tunnelUrl}/api/chats/${currentChatId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                id: currentChatId,
+                title: getChatTitle(),
+                createdAt: currentChatCreatedAt,
+                updatedAt: Date.now(),
+                messages: messages.slice()
+            })
+        });
+        localStorage.setItem(LAST_CHAT_KEY, currentChatId);
+    } catch {}
 }
 
-function deleteChat(id) {
-    const chats = loadChats();
-    delete chats[id];
-    saveChatsToStorage(chats);
+async function loadChat(id) {
+    if (!settings.tunnelUrl) return;
+    await saveCurrentChat();
+    try {
+        const r = await fetch(`${settings.tunnelUrl}/api/chats/${id}`);
+        if (!r.ok) return;
+        const chat = await r.json();
+        currentChatId = chat.id;
+        currentChatCreatedAt = chat.createdAt;
+        messages = chat.messages.slice();
+        localStorage.setItem(LAST_CHAT_KEY, currentChatId);
+        messagesEl.innerHTML = '';
+        messagesEl.appendChild(welcomeEl);
+        if (messages.length === 0) {
+            welcomeEl.classList.remove('hidden');
+        } else {
+            welcomeEl.classList.add('hidden');
+            messages.forEach(m => appendMessage(m.role, m.content, m.imageUrls || []));
+        }
+        closeChatsPanel();
+        userInputEl.focus();
+    } catch {}
+}
+
+async function deleteChat(id) {
+    if (settings.tunnelUrl) {
+        try {
+            await fetch(`${settings.tunnelUrl}/api/chats/${id}`, { method: 'DELETE' });
+        } catch {}
+    }
     if (currentChatId === id) {
         currentChatId = null;
+        currentChatCreatedAt = null;
         localStorage.removeItem(LAST_CHAT_KEY);
     }
     renderChatsList();
 }
 
-function restoreLastChat() {
+async function restoreLastChat() {
+    if (!settings.tunnelUrl) return;
     const lastId = localStorage.getItem(LAST_CHAT_KEY);
     if (!lastId) return;
-    const chats = loadChats();
-    const chat = chats[lastId];
-    if (!chat || chat.messages.length === 0) return;
-    currentChatId = chat.id;
-    messages = chat.messages.slice();
-    welcomeEl.classList.add('hidden');
-    messages.forEach(m => appendMessage(m.role, m.content, m.imageUrls || []));
+    try {
+        const r = await fetch(`${settings.tunnelUrl}/api/chats/${lastId}`);
+        if (!r.ok) return;
+        const chat = await r.json();
+        if (!chat.messages?.length) return;
+        currentChatId = chat.id;
+        currentChatCreatedAt = chat.createdAt;
+        messages = chat.messages.slice();
+        welcomeEl.classList.add('hidden');
+        messages.forEach(m => appendMessage(m.role, m.content, m.imageUrls || []));
+    } catch {}
 }
 
 function formatChatDate(ts) {
@@ -220,13 +229,20 @@ function formatChatDate(ts) {
     return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
-function renderChatsList() {
-    const chats = Object.values(loadChats()).sort((a, b) => b.updatedAt - a.updatedAt);
+async function renderChatsList() {
+    chatsListEl.innerHTML = '<div class="chats-empty">Loading…</div>';
+    let chats = [];
+    if (settings.tunnelUrl) {
+        try {
+            const r = await fetch(`${settings.tunnelUrl}/api/chats`);
+            if (r.ok) chats = await r.json();
+        } catch {}
+    }
     chatsListEl.innerHTML = '';
     if (chats.length === 0) {
         const empty = document.createElement('div');
         empty.className = 'chats-empty';
-        empty.textContent = 'No saved chats yet.';
+        empty.textContent = settings.tunnelUrl ? 'No saved chats yet.' : 'Set a tunnel URL in Settings to use chat history.';
         chatsListEl.appendChild(empty);
         return;
     }
@@ -261,12 +277,13 @@ function renderChatsList() {
     });
 }
 
-function openChatsPanel()  { renderChatsList(); chatsModal.classList.remove('hidden'); }
+function openChatsPanel()  { chatsModal.classList.remove('hidden'); renderChatsList(); }
 function closeChatsPanel() { chatsModal.classList.add('hidden'); }
 
-function newChat() {
-    saveCurrentChat();
+async function newChat() {
+    await saveCurrentChat();
     currentChatId = null;
+    currentChatCreatedAt = null;
     localStorage.removeItem(LAST_CHAT_KEY);
     messages = [];
     pendingImages = [];

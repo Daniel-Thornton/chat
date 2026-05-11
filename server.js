@@ -3,13 +3,18 @@
 const http  = require('http');
 const https = require('https');
 const url   = require('url');
+const fs    = require('fs');
+const path  = require('path');
+
+const CHATS_DIR = path.join(__dirname, 'chats');
+if (!fs.existsSync(CHATS_DIR)) fs.mkdirSync(CHATS_DIR, { recursive: true });
 
 const PORT       = 8788;
 const OLLAMA_URL = 'http://localhost:11434';
 
 const CORS_HEADERS = {
     'Access-Control-Allow-Origin':  '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Access-Control-Max-Age':       '86400'
 };
@@ -99,6 +104,62 @@ function braveSearch(query, apiKey) {
         req.on('error', reject);
         req.end();
     });
+}
+
+function safeChatPath(id) {
+    if (!/^chat_\d+$/.test(id)) return null;
+    return path.join(CHATS_DIR, id + '.json');
+}
+
+function listChats() {
+    try {
+        return fs.readdirSync(CHATS_DIR)
+            .filter(f => f.endsWith('.json'))
+            .map(f => {
+                try {
+                    const { messages, ...meta } = JSON.parse(fs.readFileSync(path.join(CHATS_DIR, f), 'utf8'));
+                    return meta;
+                } catch { return null; }
+            })
+            .filter(Boolean)
+            .sort((a, b) => b.updatedAt - a.updatedAt);
+    } catch { return []; }
+}
+
+async function handleChatsApi(req, res, pathname) {
+    const id = pathname.length > '/api/chats'.length ? pathname.slice('/api/chats/'.length) : null;
+
+    if (!id) {
+        if (req.method === 'GET') return json(res, 200, listChats());
+        return json(res, 405, { error: 'Method not allowed' });
+    }
+
+    const chatPath = safeChatPath(id);
+    if (!chatPath) return json(res, 400, { error: 'Invalid chat ID' });
+
+    if (req.method === 'GET') {
+        try {
+            return json(res, 200, JSON.parse(fs.readFileSync(chatPath, 'utf8')));
+        } catch {
+            return json(res, 404, { error: 'Chat not found' });
+        }
+    }
+
+    if (req.method === 'POST') {
+        let body;
+        try { body = JSON.parse(await readBody(req)); }
+        catch { return json(res, 400, { error: 'Invalid JSON' }); }
+        fs.writeFileSync(chatPath, JSON.stringify(body, null, 2));
+        console.log(`  [chats] saved ${id}`);
+        return json(res, 200, { ok: true });
+    }
+
+    if (req.method === 'DELETE') {
+        try { fs.unlinkSync(chatPath); console.log(`  [chats] deleted ${id}`); } catch {}
+        return json(res, 200, { ok: true });
+    }
+
+    json(res, 405, { error: 'Method not allowed' });
 }
 
 function formatSearchResults(data) {
@@ -205,6 +266,11 @@ const server = http.createServer((req, res) => {
     // Intercept chat to handle tool-use loop
     if (pathname === '/api/chat' && req.method === 'POST') {
         handleChat(req, res);
+        return;
+    }
+
+    if (pathname === '/api/chats' || pathname.startsWith('/api/chats/')) {
+        handleChatsApi(req, res, pathname);
         return;
     }
 
