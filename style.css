@@ -532,3 +532,86 @@ input:focus, textarea:focus {
 [data-theme="dark"] .bubble code {
     background: rgba(255,255,255,0.08);
 }
+
+/* ── Chats panel ── */
+
+.chats-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.chats-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 50dvh;
+    overflow-y: auto;
+    min-height: 60px;
+}
+
+.chats-empty {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    padding: 24px 0;
+}
+
+.chat-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    background: var(--bg);
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.chat-item:hover {
+    background: var(--green-light);
+    border-color: var(--green);
+}
+
+.chat-item.active {
+    background: var(--green-light);
+    border-color: var(--green);
+}
+
+.chat-item-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.chat-item-title {
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.chat-item-meta {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.chat-item-delete {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    padding: 4px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    transition: color 0.15s;
+}
+
+.chat-item-delete:hover {
+    color: var(--red);
+}

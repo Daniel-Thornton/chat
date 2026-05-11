@@ -16,6 +16,11 @@
                 <span id="model-badge" class="model-badge"></span>
             </div>
             <div class="header-right">
+                <button id="chats-btn" class="icon-btn" title="Saved chats" aria-label="Saved chats">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                    </svg>
+                </button>
                 <button id="dark-mode-btn" class="icon-btn" title="Toggle dark mode" aria-label="Toggle dark mode"></button>
                 <button id="clear-btn" class="icon-btn danger" title="Clear conversation" aria-label="Clear conversation">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -57,6 +62,20 @@
                 <div class="modal-actions">
                     <button id="save-settings" class="btn primary">Save</button>
                     <button id="close-settings" class="btn">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Chats modal -->
+        <div id="chats-modal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Saved chats">
+            <div class="modal-content">
+                <div class="chats-header">
+                    <h2>Saved Chats</h2>
+                    <button id="new-chat-btn" class="btn primary">+ New Chat</button>
+                </div>
+                <div id="chats-list" class="chats-list"></div>
+                <div class="modal-actions">
+                    <button id="close-chats" class="btn">Close</button>
                 </div>
             </div>
         </div>

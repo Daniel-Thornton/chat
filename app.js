@@ -1,6 +1,8 @@
 'use strict';
 
 const SETTINGS_KEY = 'chat_settings_v1';
+const CHATS_KEY    = 'chat_history_v1';
+const LAST_CHAT_KEY = 'last_chat_id';
 
 const DEFAULT_SYSTEM_PROMPT = `You are a helpful, knowledgeable assistant. Answer clearly and concisely. Use markdown formatting where it helps readability — code blocks for code, bullet points for lists, bold for key terms.`;
 
@@ -27,14 +29,20 @@ const braveApiKeyIn    = document.getElementById('brave-api-key');
 const imageBtn         = document.getElementById('image-btn');
 const imageInput       = document.getElementById('image-input');
 const imagePreviewBar  = document.getElementById('image-preview-bar');
+const chatsBtn         = document.getElementById('chats-btn');
+const chatsModal       = document.getElementById('chats-modal');
+const newChatBtn       = document.getElementById('new-chat-btn');
+const closeChatsBtn    = document.getElementById('close-chats');
+const chatsListEl      = document.getElementById('chats-list');
 
 // ── State ──
 
 let settings = loadSettings();
-let messages = []; // { role, content, images? }
+let messages = []; // { role, content, images?, imageUrls? }
 let busy = false;
 let darkMode = localStorage.getItem('darkMode') === 'true';
 let pendingImages = []; // { dataUrl, base64 }
+let currentChatId = null;
 
 // ── Boot ──
 
@@ -42,6 +50,7 @@ function init() {
     applySettings();
     applyDarkMode();
     setupEventListeners();
+    restoreLastChat();
     userInputEl.focus();
 }
 
@@ -92,11 +101,15 @@ function setupEventListeners() {
     saveSettingsBtn.addEventListener('click', () => { persistSettings(); closeSettings(); });
     closeSettingsBtn.addEventListener('click', closeSettings);
     settingsModal.addEventListener('click', e => { if (e.target === settingsModal) closeSettings(); });
-    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSettings(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeSettings(); closeChatsPanel(); } });
 
     darkModeBtn.addEventListener('click', toggleDarkMode);
-    clearBtn.addEventListener('click', clearConversation);
+    clearBtn.addEventListener('click', newChat);
     sendBtn.addEventListener('click', handleSend);
+    chatsBtn.addEventListener('click', openChatsPanel);
+    newChatBtn.addEventListener('click', newChat);
+    closeChatsBtn.addEventListener('click', closeChatsPanel);
+    chatsModal.addEventListener('click', e => { if (e.target === chatsModal) closeChatsPanel(); });
 
     userInputEl.addEventListener('keydown', e => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -117,13 +130,151 @@ function setupEventListeners() {
 function openSettings()  { applySettings(); settingsModal.classList.remove('hidden'); }
 function closeSettings() { settingsModal.classList.add('hidden'); }
 
-function clearConversation() {
+// ── Chat history ──
+
+function loadChats() {
+    try { return JSON.parse(localStorage.getItem(CHATS_KEY)) || {}; }
+    catch { return {}; }
+}
+
+function saveChatsToStorage(chats) {
+    localStorage.setItem(CHATS_KEY, JSON.stringify(chats));
+}
+
+function generateChatId() {
+    return 'chat_' + Date.now();
+}
+
+function getChatTitle() {
+    const first = messages.find(m => m.role === 'user');
+    if (!first) return 'New Chat';
+    const text = (first.content || 'Image conversation').trim();
+    return text.length > 45 ? text.slice(0, 42) + '...' : text;
+}
+
+function saveCurrentChat() {
+    if (messages.length === 0) return;
+    const chats = loadChats();
+    if (!currentChatId) currentChatId = generateChatId();
+    const existing = chats[currentChatId];
+    chats[currentChatId] = {
+        id: currentChatId,
+        title: getChatTitle(),
+        createdAt: existing ? existing.createdAt : Date.now(),
+        updatedAt: Date.now(),
+        messages: messages.slice()
+    };
+    saveChatsToStorage(chats);
+    localStorage.setItem(LAST_CHAT_KEY, currentChatId);
+}
+
+function loadChat(id) {
+    const chats = loadChats();
+    const chat = chats[id];
+    if (!chat) return;
+    saveCurrentChat();
+    currentChatId = chat.id;
+    messages = chat.messages.slice();
+    localStorage.setItem(LAST_CHAT_KEY, currentChatId);
+    messagesEl.innerHTML = '';
+    messagesEl.appendChild(welcomeEl);
+    if (messages.length === 0) {
+        welcomeEl.classList.remove('hidden');
+    } else {
+        welcomeEl.classList.add('hidden');
+        messages.forEach(m => appendMessage(m.role, m.content, m.imageUrls || []));
+    }
+    closeChatsPanel();
+    userInputEl.focus();
+}
+
+function deleteChat(id) {
+    const chats = loadChats();
+    delete chats[id];
+    saveChatsToStorage(chats);
+    if (currentChatId === id) {
+        currentChatId = null;
+        localStorage.removeItem(LAST_CHAT_KEY);
+    }
+    renderChatsList();
+}
+
+function restoreLastChat() {
+    const lastId = localStorage.getItem(LAST_CHAT_KEY);
+    if (!lastId) return;
+    const chats = loadChats();
+    const chat = chats[lastId];
+    if (!chat || chat.messages.length === 0) return;
+    currentChatId = chat.id;
+    messages = chat.messages.slice();
+    welcomeEl.classList.add('hidden');
+    messages.forEach(m => appendMessage(m.role, m.content, m.imageUrls || []));
+}
+
+function formatChatDate(ts) {
+    const d = new Date(ts);
+    const diffDays = Math.floor((Date.now() - ts) / 86400000);
+    if (diffDays === 0) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (diffDays === 1) return 'Yesterday';
+    if (diffDays < 7) return d.toLocaleDateString([], { weekday: 'long' });
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+function renderChatsList() {
+    const chats = Object.values(loadChats()).sort((a, b) => b.updatedAt - a.updatedAt);
+    chatsListEl.innerHTML = '';
+    if (chats.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'chats-empty';
+        empty.textContent = 'No saved chats yet.';
+        chatsListEl.appendChild(empty);
+        return;
+    }
+    chats.forEach(chat => {
+        const item = document.createElement('div');
+        item.className = 'chat-item' + (chat.id === currentChatId ? ' active' : '');
+
+        const info = document.createElement('div');
+        info.className = 'chat-item-info';
+
+        const title = document.createElement('div');
+        title.className = 'chat-item-title';
+        title.textContent = chat.title;
+
+        const meta = document.createElement('div');
+        meta.className = 'chat-item-meta';
+        meta.textContent = formatChatDate(chat.updatedAt);
+
+        info.appendChild(title);
+        info.appendChild(meta);
+
+        const del = document.createElement('button');
+        del.className = 'chat-item-delete';
+        del.setAttribute('aria-label', 'Delete chat');
+        del.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>`;
+        del.addEventListener('click', e => { e.stopPropagation(); deleteChat(chat.id); });
+
+        item.appendChild(info);
+        item.appendChild(del);
+        item.addEventListener('click', () => loadChat(chat.id));
+        chatsListEl.appendChild(item);
+    });
+}
+
+function openChatsPanel()  { renderChatsList(); chatsModal.classList.remove('hidden'); }
+function closeChatsPanel() { chatsModal.classList.add('hidden'); }
+
+function newChat() {
+    saveCurrentChat();
+    currentChatId = null;
+    localStorage.removeItem(LAST_CHAT_KEY);
     messages = [];
     pendingImages = [];
     renderImagePreviews();
     messagesEl.innerHTML = '';
     messagesEl.appendChild(welcomeEl);
     welcomeEl.classList.remove('hidden');
+    closeChatsPanel();
     userInputEl.focus();
 }
 
@@ -195,7 +346,10 @@ async function handleSend() {
     renderImagePreviews();
 
     const userMsg = { role: 'user', content: text };
-    if (images.length > 0) userMsg.images = images.map(i => i.base64);
+    if (images.length > 0) {
+        userMsg.images    = images.map(i => i.base64);
+        userMsg.imageUrls = images.map(i => i.dataUrl);
+    }
 
     appendMessage('user', text, images.map(i => i.dataUrl));
     messages.push(userMsg);
@@ -211,6 +365,7 @@ async function handleSend() {
         typingEl.remove();
         appendMessage('assistant', reply);
         messages.push({ role: 'assistant', content: reply });
+        saveCurrentChat();
     } catch (err) {
         typingEl.remove();
         showError(err.message);
@@ -233,7 +388,7 @@ async function callOllama(history) {
                 model,
                 messages: [
                     { role: 'system', content: systemPrompt },
-                    ...history
+                    ...history.map(({ imageUrls, ...rest }) => rest)
                 ],
                 stream: false,
                 ...(settings.braveApiKey ? { braveApiKey: settings.braveApiKey } : {})
