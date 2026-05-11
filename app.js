@@ -36,6 +36,7 @@ const chatsListEl      = document.getElementById('chats-list');
 
 let settings = loadSettings();
 let messages = []; // { role, content, images?, imageUrls? }
+let messageEls = []; // parallel DOM elements for each entry in messages
 let busy = false;
 let darkMode = localStorage.getItem('darkMode') === 'true';
 let pendingImages = []; // { dataUrl, base64 }
@@ -254,6 +255,7 @@ async function loadChat(id) {
         currentChatId = chat.id;
         currentChatCreatedAt = chat.createdAt;
         messages = chat.messages.slice();
+        messageEls = [];
         localStorage.setItem(LAST_CHAT_KEY, currentChatId);
         messagesEl.innerHTML = '';
         messagesEl.appendChild(welcomeEl);
@@ -294,6 +296,7 @@ async function restoreLastChat() {
         currentChatId = chat.id;
         currentChatCreatedAt = chat.createdAt;
         messages = chat.messages.slice();
+        messageEls = [];
         welcomeEl.classList.add('hidden');
         messages.forEach(m => appendMessage(m.role, m.content, m.imageUrls || []));
     } catch {}
@@ -365,6 +368,7 @@ async function newChat() {
     currentChatCreatedAt = null;
     localStorage.removeItem(LAST_CHAT_KEY);
     messages = [];
+    messageEls = [];
     pendingImages = [];
     renderImagePreviews();
     messagesEl.innerHTML = '';
@@ -521,13 +525,29 @@ async function callOllama(history) {
 // ── Rendering ──
 
 function appendMessage(role, content, imageUrls = []) {
+    const msgIndex = messageEls.length;
     const msg = document.createElement('div');
     msg.className = `msg ${role}`;
+
+    const header = document.createElement('div');
+    header.className = 'msg-header';
 
     const label = document.createElement('div');
     label.className = 'msg-label';
     label.textContent = role === 'user' ? 'You' : (settings.model || 'Assistant');
-    msg.appendChild(label);
+    header.appendChild(label);
+
+    if (role === 'user') {
+        const editBtn = document.createElement('button');
+        editBtn.className = 'msg-edit-btn';
+        editBtn.title = 'Edit message';
+        editBtn.setAttribute('aria-label', 'Edit message');
+        editBtn.textContent = '✏';
+        editBtn.addEventListener('click', () => enterEditMode(msg, msgIndex));
+        header.appendChild(editBtn);
+    }
+
+    msg.appendChild(header);
 
     if (imageUrls.length > 0) {
         const imgRow = document.createElement('div');
@@ -552,8 +572,125 @@ function appendMessage(role, content, imageUrls = []) {
     }
 
     messagesEl.appendChild(msg);
+    messageEls.push(msg);
     scrollToBottom();
     return msg;
+}
+
+function enterEditMode(msgEl, msgIndex) {
+    if (busy) return;
+    const bubble = msgEl.querySelector('.bubble');
+    if (!bubble) return;
+
+    const originalContent = messages[msgIndex].content;
+    bubble.remove();
+
+    const editArea = document.createElement('div');
+    editArea.className = 'edit-area';
+
+    const textarea = document.createElement('textarea');
+    textarea.className = 'edit-textarea';
+    textarea.value = originalContent;
+
+    textarea.addEventListener('input', () => {
+        textarea.style.height = 'auto';
+        textarea.style.height = textarea.scrollHeight + 'px';
+    });
+
+    const actions = document.createElement('div');
+    actions.className = 'edit-actions';
+
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'btn primary';
+    saveBtn.textContent = 'Save & Send';
+    saveBtn.addEventListener('click', () => {
+        const newText = textarea.value.trim();
+        if (newText) submitEdit(msgIndex, newText);
+    });
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'btn';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.addEventListener('click', () => cancelEdit(msgEl, originalContent, editArea));
+
+    actions.appendChild(saveBtn);
+    actions.appendChild(cancelBtn);
+    editArea.appendChild(textarea);
+    editArea.appendChild(actions);
+    msgEl.appendChild(editArea);
+
+    textarea.focus();
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+
+    textarea.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            const newText = textarea.value.trim();
+            if (newText) submitEdit(msgIndex, newText);
+        }
+        if (e.key === 'Escape') cancelEdit(msgEl, originalContent, editArea);
+    });
+}
+
+function cancelEdit(msgEl, originalContent, editArea) {
+    editArea.remove();
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    bubble.innerHTML = escapeHtml(originalContent).replace(/\n/g, '<br>');
+    msgEl.appendChild(bubble);
+}
+
+async function submitEdit(msgIndex, newText) {
+    if (!settings.tunnelUrl) {
+        showError('No tunnel URL set. Open Settings and paste your Cloudflare tunnel URL.');
+        return;
+    }
+
+    const origMsg = messages[msgIndex];
+    const imageUrls = origMsg.imageUrls || [];
+    const images = origMsg.images || [];
+
+    // Remove all message DOM elements from msgIndex onwards
+    for (let i = msgIndex; i < messageEls.length; i++) {
+        messageEls[i].remove();
+    }
+    // Remove any stray typing indicators / error bubbles after the last kept message
+    const lastKept = msgIndex > 0 ? messageEls[msgIndex - 1] : welcomeEl;
+    let next = lastKept.nextSibling;
+    while (next) {
+        const toRemove = next;
+        next = next.nextSibling;
+        toRemove.remove();
+    }
+
+    messageEls.length = msgIndex;
+    messages.length = msgIndex;
+
+    const userMsg = { role: 'user', content: newText };
+    if (images.length > 0) {
+        userMsg.images = images;
+        userMsg.imageUrls = imageUrls;
+    }
+
+    appendMessage('user', newText, imageUrls);
+    messages.push(userMsg);
+
+    const typingEl = appendTypingIndicator();
+    setBusy(true);
+
+    try {
+        const reply = await callOllama(messages);
+        typingEl.remove();
+        appendMessage('assistant', reply);
+        messages.push({ role: 'assistant', content: reply });
+        saveCurrentChat();
+    } catch (err) {
+        typingEl.remove();
+        showError(err.message);
+    } finally {
+        setBusy(false);
+        userInputEl.focus();
+    }
 }
 
 function appendTypingIndicator() {
@@ -594,7 +731,7 @@ function setBusy(on) {
 
 function parseMarkdown(text) {
     const blocks = [];
-    text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+    text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, _lang, code) => {
         const i = blocks.length;
         blocks.push(`<pre><code>${escapeHtml(code.trim())}</code></pre>`);
         return `\x00BLOCK${i}\x00`;

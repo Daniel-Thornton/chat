@@ -484,6 +484,84 @@ input:focus, textarea:focus {
     opacity: 0.7;
 }
 
+/* ── Message header (label + edit button) ── */
+.msg-header {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.msg-edit-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 11px;
+    padding: 1px 3px;
+    color: var(--text-muted);
+    opacity: 0;
+    line-height: 1;
+    transition: opacity 0.1s;
+}
+
+.msg.user:hover .msg-edit-btn,
+.msg.user:focus-within .msg-edit-btn {
+    opacity: 1;
+}
+
+.msg-edit-btn:hover { color: var(--text); }
+
+.msg.user:has(.edit-area) .msg-edit-btn { display: none; }
+
+/* ── Inline edit area ── */
+.edit-area {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+}
+
+.edit-textarea {
+    width: 100%;
+    min-width: 220px;
+    padding: 6px 8px;
+    border-top:    2px solid var(--bsh);
+    border-left:   2px solid var(--bsh);
+    border-right:  2px solid var(--bhi);
+    border-bottom: 2px solid var(--bhi);
+    font-size: 16px;
+    font-family: inherit;
+    color: var(--text);
+    background: var(--field-bg);
+    resize: none;
+    outline: none;
+    line-height: 1.4;
+    overflow-y: hidden;
+}
+
+[data-theme="dark"] .edit-textarea {
+    background: #1a1a1a;
+    color: #ffffff;
+}
+
+.edit-textarea:focus {
+    outline: 1px dotted var(--c-navy);
+    outline-offset: -2px;
+}
+
+[data-theme="dark"] .edit-textarea:focus {
+    outline-color: #5555ff;
+}
+
+.edit-actions {
+    display: flex;
+    gap: 6px;
+    justify-content: flex-end;
+}
+
+.msg.user:has(.edit-area) {
+    min-width: 55%;
+}
+
 /* ── Message bubbles ── */
 .msg {
     display: flex;
