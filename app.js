@@ -42,6 +42,7 @@ let darkMode = localStorage.getItem('darkMode') === 'true';
 let pendingImages = []; // { dataUrl, base64 }
 let currentChatId = null;
 let currentChatCreatedAt = null;
+let currentChatTitle = null;
 
 // ── Boot ──
 
@@ -216,11 +217,46 @@ function generateChatId() {
     return 'chat_' + Date.now();
 }
 
-function getChatTitle() {
+async function getChatTitle() {
+    if (currentChatTitle) return currentChatTitle;
+
     const first = messages.find(m => m.role === 'user');
     if (!first) return 'New Chat';
-    const text = (first.content || 'Image conversation').trim();
-    return text.length > 45 ? text.slice(0, 42) + '...' : text;
+
+    const fallback = (() => {
+        const text = (typeof first.content === 'string' ? first.content : 'Image conversation').trim();
+        return text.length > 45 ? text.slice(0, 42) + '...' : text;
+    })();
+
+    if (!settings.tunnelUrl || messages.length < 2) return fallback;
+
+    try {
+        const transcript = messages
+            .map(m => `${m.role}: ${typeof m.content === 'string' ? m.content : '[image]'}`)
+            .join('\n');
+        const response = await fetch(`${settings.tunnelUrl}/api/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model: settings.model || 'llama3.2',
+                messages: [
+                    { role: 'system', content: 'Generate a chat title of 6 words or fewer. Reply with ONLY the title, no punctuation, no quotes, no explanation.' },
+                    { role: 'user', content: transcript }
+                ],
+                stream: false
+            })
+        });
+        if (response.ok) {
+            const data = await response.json();
+            const title = data?.message?.content?.trim().replace(/^["']+|["']+$/g, '');
+            if (title) {
+                currentChatTitle = title;
+                return currentChatTitle;
+            }
+        }
+    } catch {}
+
+    return fallback;
 }
 
 async function saveCurrentChat() {
@@ -235,7 +271,7 @@ async function saveCurrentChat() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 id: currentChatId,
-                title: getChatTitle(),
+                title: await getChatTitle(),
                 createdAt: currentChatCreatedAt,
                 updatedAt: Date.now(),
                 messages: messages.slice()
@@ -254,6 +290,7 @@ async function loadChat(id) {
         const chat = await r.json();
         currentChatId = chat.id;
         currentChatCreatedAt = chat.createdAt;
+        currentChatTitle = chat.title || null;
         messages = chat.messages.slice();
         messageEls = [];
         localStorage.setItem(LAST_CHAT_KEY, currentChatId);
@@ -279,6 +316,7 @@ async function deleteChat(id) {
     if (currentChatId === id) {
         currentChatId = null;
         currentChatCreatedAt = null;
+        currentChatTitle = null;
         localStorage.removeItem(LAST_CHAT_KEY);
     }
     renderChatsList();
@@ -295,6 +333,7 @@ async function restoreLastChat() {
         if (!chat.messages?.length) return;
         currentChatId = chat.id;
         currentChatCreatedAt = chat.createdAt;
+        currentChatTitle = chat.title || null;
         messages = chat.messages.slice();
         messageEls = [];
         welcomeEl.classList.add('hidden');
@@ -366,6 +405,7 @@ async function newChat() {
     await saveCurrentChat();
     currentChatId = null;
     currentChatCreatedAt = null;
+    currentChatTitle = null;
     localStorage.removeItem(LAST_CHAT_KEY);
     messages = [];
     messageEls = [];
