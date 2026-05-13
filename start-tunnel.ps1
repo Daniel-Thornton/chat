@@ -3,7 +3,7 @@
 
 $model = "llama3.2"   # Change to match the model you want to use
 
-# ── Prerequisites ──────────────────────────────────────────────────────────────
+# ---------- Prerequisites ---------------------------------------------------
 
 if (-not (Get-Command "node" -ErrorAction SilentlyContinue)) {
     Write-Host ""
@@ -28,9 +28,8 @@ if (-not (Test-Path $cloudflared)) {
     exit 1
 }
 
-# ── Ollama ─────────────────────────────────────────────────────────────────────
+# ---------- Ollama ----------------------------------------------------------
 
-# Kill any process already on port 8788
 $conn = netstat -ano | Select-String "8788" | Select-String "LISTENING"
 if ($conn) {
     $oldPid = ($conn -split '\s+')[-1].Trim()
@@ -50,17 +49,16 @@ if (-not $ollamaRunning) {
     Write-Host "Ollama is already running."
 }
 
-# ── Kokoro TTS ─────────────────────────────────────────────────────────────────
+# ---------- Kokoro TTS ------------------------------------------------------
 
-$ttsDir      = Join-Path $PSScriptRoot "tts"
-$venvDir     = Join-Path $ttsDir "venv"
-$venvPython  = Join-Path $venvDir "Scripts\python.exe"
-$venvPip     = Join-Path $venvDir "Scripts\pip.exe"
-$venvUvicorn = Join-Path $venvDir "Scripts\uvicorn.exe"
+$ttsDir       = Join-Path $PSScriptRoot "tts"
+$venvDir      = Join-Path $ttsDir "venv"
+$venvPython   = Join-Path $venvDir "Scripts\python.exe"
+$venvPip      = Join-Path $venvDir "Scripts\pip.exe"
+$venvUvicorn  = Join-Path $venvDir "Scripts\uvicorn.exe"
 $kokoroScript = Join-Path $ttsDir "kokoro_server.py"
 $requirements = Join-Path $ttsDir "requirements.txt"
 
-# Kill any existing process on port 8880
 $kConn = netstat -ano | Select-String ":8880 " | Select-String "LISTENING"
 if ($kConn) {
     $kPid = ($kConn -split '\s+')[-1].Trim()
@@ -70,7 +68,6 @@ if ($kConn) {
     }
 }
 
-# Create venv if it doesn't exist yet
 if (-not (Test-Path $venvPython)) {
     Write-Host ""
     Write-Host "Creating Kokoro virtual environment (one-time setup)..." -ForegroundColor Cyan
@@ -81,10 +78,9 @@ if (-not (Test-Path $venvPython)) {
     }
 }
 
-# Install requirements if uvicorn isn't present yet (first-run indicator)
 if (-not (Test-Path $venvUvicorn)) {
     Write-Host ""
-    Write-Host "Installing Kokoro dependencies — this may take a minute..." -ForegroundColor Cyan
+    Write-Host "Installing Kokoro dependencies - this may take a minute..." -ForegroundColor Cyan
     & $venvPip install --upgrade pip --quiet
     & $venvPip install -r $requirements
     if ($LASTEXITCODE -ne 0) {
@@ -94,14 +90,13 @@ if (-not (Test-Path $venvUvicorn)) {
     Write-Host "Dependencies installed." -ForegroundColor Green
 }
 
-# Start Kokoro (model files download on first run, shown in its window)
 Write-Host ""
 Write-Host "Starting Kokoro TTS server..."
-Write-Host "(On first run it downloads ~114 MB of model files — check the Kokoro window for progress)"
+Write-Host "(On first run it downloads ~114 MB of model files - check the Kokoro window for progress)"
 Start-Process $venvPython -ArgumentList $kokoroScript -WorkingDirectory $ttsDir -WindowStyle Minimized
 Start-Sleep -Seconds 4
 
-# ── Chat server ────────────────────────────────────────────────────────────────
+# ---------- Chat server -----------------------------------------------------
 
 Write-Host ""
 Write-Host "Starting chat server..."
@@ -109,7 +104,7 @@ $serverScript = Join-Path $PSScriptRoot "server.js"
 Start-Process "node" -ArgumentList $serverScript -WindowStyle Minimized
 Start-Sleep -Seconds 2
 
-# ── Cloudflare tunnel ──────────────────────────────────────────────────────────
+# ---------- Cloudflare tunnel -----------------------------------------------
 
 Write-Host ""
 Write-Host "Opening Cloudflare tunnel..."
