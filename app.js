@@ -56,7 +56,9 @@ let convMode = false;
 let convBusy = false;
 let convListening = false;
 let convRecognition = null;
-let convUtterance = null;
+let convUtterance = null;    // SpeechSynthesisUtterance (fallback TTS)
+let convCurrentAudio = null; // HTMLAudioElement (Kokoro TTS)
+let convSpeakResolve = null; // stored resolve to force-complete speakConvReply on cancel
 
 // ── Boot ──
 
@@ -301,10 +303,18 @@ function exitConvMode() {
 
     if (convListening && convRecognition) convRecognition.stop();
 
-    if (window.speechSynthesis.speaking) {
-        window.speechSynthesis.cancel();
-        convUtterance = null;
+    if (convCurrentAudio) {
+        const audio = convCurrentAudio;
+        convCurrentAudio = null;
+        audio.pause();
     }
+    if (window.speechSynthesis.speaking) {
+        convUtterance = null;
+        window.speechSynthesis.cancel();
+    }
+    const res = convSpeakResolve;
+    convSpeakResolve = null;
+    if (res) res();
 
     convBusy = false;
     convRecordBtn.classList.remove('recording', 'speaking');
@@ -315,15 +325,25 @@ function exitConvMode() {
 
 function handleConvBtnClick() {
     if (convBusy) {
-        // Stop TTS if speaking, allowing a new recording
-        if (window.speechSynthesis.speaking) {
-            window.speechSynthesis.cancel();
-            convUtterance = null;
-            convBusy = false;
-            convRecordBtn.classList.remove('speaking');
-            convVisualizerEl.classList.remove('speaking');
-            setConvStatus('Tap the microphone to speak');
+        // Stop Kokoro audio if playing
+        if (convCurrentAudio) {
+            const audio = convCurrentAudio;
+            convCurrentAudio = null; // null first so done() guard skips state reset
+            audio.pause();
         }
+        // Stop SpeechSynthesis fallback if active
+        if (window.speechSynthesis.speaking) {
+            convUtterance = null;
+            window.speechSynthesis.cancel();
+        }
+        // Force-resolve the pending speakConvReply promise
+        const res = convSpeakResolve;
+        convSpeakResolve = null;
+        convBusy = false;
+        convRecordBtn.classList.remove('speaking');
+        convVisualizerEl.classList.remove('speaking');
+        if (convMode) setConvStatus('Tap the microphone to speak');
+        if (res) res();
         return;
     }
 
@@ -377,43 +397,98 @@ function addConvEntry(role, text) {
     convTranscriptEl.scrollTop = convTranscriptEl.scrollHeight;
 }
 
+function stripMarkdownForSpeech(text) {
+    return text
+        .replace(/```[\s\S]*?```/g, '')
+        .replace(/`([^`]+)`/g, '$1')
+        .replace(/#{1,6}\s+/g, '')
+        .replace(/\*{1,3}([^*\n]+)\*{1,3}/g, '$1')
+        .replace(/_([^_\n]+)_/g, '$1')
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+        .replace(/^>\s+/gm, '')
+        .trim();
+}
+
 function speakConvReply(text) {
-    return new Promise(resolve => {
+    return new Promise(async resolve => {
+        convSpeakResolve = resolve;
+
         convRecordBtn.classList.remove('processing');
         convRecordBtn.classList.add('speaking');
         convRecordBtn.disabled = false; // allow clicking to interrupt
         convVisualizerEl.classList.add('speaking');
+
+        const plain = stripMarkdownForSpeech(text);
+
+        // ── Kokoro TTS via server ──
+        if (settings.tunnelUrl) {
+            setConvStatus('Generating speech…');
+            try {
+                const response = await fetch(`${settings.tunnelUrl}/api/tts`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: plain })
+                });
+
+                // User may have cancelled while we were fetching
+                if (!convBusy) { convSpeakResolve = null; resolve(); return; }
+
+                if (response.ok) {
+                    const blob = await response.blob();
+                    if (!convBusy) { convSpeakResolve = null; resolve(); return; }
+
+                    const audioUrl = URL.createObjectURL(blob);
+                    const audio = new Audio(audioUrl);
+                    convCurrentAudio = audio;
+                    setConvStatus('Speaking… (tap to stop)');
+
+                    const done = () => {
+                        URL.revokeObjectURL(audioUrl);
+                        // Only reset state if this is still the active audio
+                        if (convCurrentAudio === audio) {
+                            convCurrentAudio = null;
+                            convRecordBtn.classList.remove('speaking');
+                            convVisualizerEl.classList.remove('speaking');
+                            convBusy = false;
+                            if (convMode) setConvStatus('Tap the microphone to speak');
+                        }
+                        convSpeakResolve = null;
+                        resolve();
+                    };
+
+                    audio.onended = done;
+                    audio.onerror = done;
+                    audio.play().catch(done);
+                    return; // wait for audio events
+                }
+            } catch {}
+
+            if (!convBusy) { convSpeakResolve = null; resolve(); return; }
+        }
+
+        // ── Fallback: browser SpeechSynthesis ──
         setConvStatus('Speaking… (tap to stop)');
-
-        // Strip markdown so TTS reads clean text
-        const plain = text
-            .replace(/```[\s\S]*?```/g, '')
-            .replace(/`([^`]+)`/g, '$1')
-            .replace(/#{1,6}\s+/g, '')
-            .replace(/\*{1,3}([^*\n]+)\*{1,3}/g, '$1')
-            .replace(/_([^_\n]+)_/g, '$1')
-            .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-            .replace(/^>\s+/gm, '')
-            .trim();
-
-        convUtterance = new SpeechSynthesisUtterance(plain);
-        convUtterance.lang = 'en-US';
-        convUtterance.rate = 1;
-        convUtterance.pitch = 1;
+        const utterance = new SpeechSynthesisUtterance(plain);
+        convUtterance = utterance;
+        utterance.lang = 'en-US';
+        utterance.rate = 1;
+        utterance.pitch = 1;
 
         const done = () => {
-            convRecordBtn.classList.remove('speaking');
-            convVisualizerEl.classList.remove('speaking');
-            convBusy = false;
-            convUtterance = null;
-            if (convMode) setConvStatus('Tap the microphone to speak');
+            if (convUtterance === utterance) {
+                convUtterance = null;
+                convRecordBtn.classList.remove('speaking');
+                convVisualizerEl.classList.remove('speaking');
+                convBusy = false;
+                if (convMode) setConvStatus('Tap the microphone to speak');
+            }
+            convSpeakResolve = null;
             resolve();
         };
 
-        convUtterance.onend  = done;
-        convUtterance.onerror = done;
-
-        window.speechSynthesis.speak(convUtterance);
+        utterance.onend = done;
+        utterance.onerror = done;
+        window.speechSynthesis.speak(utterance);
     });
 }
 

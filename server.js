@@ -11,6 +11,7 @@ if (!fs.existsSync(CHATS_DIR)) fs.mkdirSync(CHATS_DIR, { recursive: true });
 
 const PORT       = 8788;
 const OLLAMA_URL = 'http://localhost:11434';
+const KOKORO_URL = 'http://localhost:8880';
 
 const CORS_HEADERS = {
     'Access-Control-Allow-Origin':  '*',
@@ -232,6 +233,62 @@ async function handleChat(req, res) {
     json(res, 500, { error: 'Tool loop limit reached without a final response.' });
 }
 
+async function handleTTS(req, res) {
+    let body;
+    try { body = JSON.parse(await readBody(req)); }
+    catch { return json(res, 400, { error: 'Invalid JSON body' }); }
+
+    const { text, voice = 'af_heart', speed = 1.0 } = body;
+    if (!text || !text.trim()) return json(res, 400, { error: 'No text provided' });
+
+    const payload = JSON.stringify({
+        model: 'kokoro',
+        input: text.trim(),
+        voice,
+        speed,
+        response_format: 'wav'
+    });
+
+    const kokoroUrl = new URL('/v1/audio/speech', KOKORO_URL);
+
+    return new Promise(resolve => {
+        const opts = {
+            hostname: kokoroUrl.hostname,
+            port:     Number(kokoroUrl.port) || 8880,
+            path:     kokoroUrl.pathname,
+            method:   'POST',
+            headers:  {
+                'Content-Type':   'application/json',
+                'Content-Length': Buffer.byteLength(payload)
+            }
+        };
+
+        const req2 = http.request(opts, kokoroRes => {
+            if (kokoroRes.statusCode !== 200) {
+                kokoroRes.resume();
+                json(res, 502, { error: `Kokoro returned HTTP ${kokoroRes.statusCode}` });
+                resolve();
+                return;
+            }
+
+            const contentType = kokoroRes.headers['content-type'] || 'audio/wav';
+            res.writeHead(200, { 'Content-Type': contentType, ...CORS_HEADERS });
+            kokoroRes.pipe(res);
+            kokoroRes.on('end', resolve);
+            kokoroRes.on('error', resolve);
+        });
+
+        req2.on('error', () => {
+            json(res, 502, { error: 'Kokoro not reachable on port 8880. Is it running?' });
+            resolve();
+        });
+
+        req2.write(payload);
+        req2.end();
+        console.log(`  [tts] "${text.trim().slice(0, 60)}"`);
+    });
+}
+
 async function handleTranscribe(req, res) {
     let body;
     try { body = JSON.parse(await readBody(req)); }
@@ -323,6 +380,11 @@ const server = http.createServer((req, res) => {
     // Intercept chat to handle tool-use loop
     if (pathname === '/api/chat' && req.method === 'POST') {
         handleChat(req, res);
+        return;
+    }
+
+    if (pathname === '/api/tts' && req.method === 'POST') {
+        handleTTS(req, res);
         return;
     }
 
