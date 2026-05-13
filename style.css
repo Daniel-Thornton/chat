@@ -96,10 +96,18 @@ header {
 }
 
 .header-left {
+    flex: 1;
     display: flex;
     align-items: center;
     gap: 8px;
     min-width: 0;
+}
+
+.header-center {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .header-logo {
@@ -117,8 +125,10 @@ header {
 }
 
 .header-right {
+    flex: 1;
     display: flex;
     align-items: center;
+    justify-content: flex-end;
     gap: 3px;
 }
 
@@ -919,3 +929,206 @@ input:focus, textarea:focus {
     width: 16px;
 }
 ::-webkit-scrollbar-corner { background: var(--c-grey); }
+
+/* ── Conversation mode panel ── */
+.conv-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 22px;
+    background: var(--field-bg);
+    border-top:    2px solid var(--bsh);
+    border-left:   2px solid var(--bsh);
+    border-right:  2px solid var(--bhi);
+    border-bottom: 2px solid var(--bhi);
+    margin: 4px;
+    padding: 24px 16px;
+    overflow-y: auto;
+}
+
+.conv-panel.hidden { display: none; }
+
+[data-theme="dark"] .conv-panel { background: #1a1a1a; }
+
+/* Hide chat UI when conv mode is active */
+.layout.conv-mode .messages   { display: none; }
+.layout.conv-mode .input-area { display: none; }
+
+/* ── Conv status text ── */
+.conv-status-text {
+    font-size: 17px;
+    color: var(--text-muted);
+    font-weight: bold;
+    text-align: center;
+    min-height: 1.5em;
+    letter-spacing: 0.01em;
+}
+
+/* ── Conv visualizer ── */
+.conv-visualizer {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    height: 44px;
+}
+
+.conv-wave {
+    width: 7px;
+    background: var(--c-dgrey);
+    height: 8px;
+    transition: height 0.15s;
+}
+
+[data-theme="dark"] .conv-wave { background: #555; }
+
+.conv-visualizer.active .conv-wave {
+    background: var(--red);
+    animation: conv-wave-bounce 0.7s ease-in-out infinite;
+}
+
+.conv-visualizer.active .conv-wave:nth-child(1) { animation-delay: 0.00s; }
+.conv-visualizer.active .conv-wave:nth-child(2) { animation-delay: 0.12s; }
+.conv-visualizer.active .conv-wave:nth-child(3) { animation-delay: 0.24s; }
+.conv-visualizer.active .conv-wave:nth-child(4) { animation-delay: 0.12s; }
+.conv-visualizer.active .conv-wave:nth-child(5) { animation-delay: 0.00s; }
+
+.conv-visualizer.speaking .conv-wave {
+    background: var(--c-navy);
+    animation: conv-wave-bounce 0.55s ease-in-out infinite;
+}
+
+[data-theme="dark"] .conv-visualizer.speaking .conv-wave { background: #5555ff; }
+
+.conv-visualizer.speaking .conv-wave:nth-child(1) { animation-delay: 0.00s; }
+.conv-visualizer.speaking .conv-wave:nth-child(2) { animation-delay: 0.10s; }
+.conv-visualizer.speaking .conv-wave:nth-child(3) { animation-delay: 0.20s; }
+.conv-visualizer.speaking .conv-wave:nth-child(4) { animation-delay: 0.10s; }
+.conv-visualizer.speaking .conv-wave:nth-child(5) { animation-delay: 0.00s; }
+
+@keyframes conv-wave-bounce {
+    0%, 100% { height: 8px; }
+    50%       { height: 38px; }
+}
+
+/* ── Conv record button ── */
+.conv-record-btn {
+    width: 84px;
+    height: 84px;
+    border-radius: 50%;
+    background: var(--card);
+    border-top:    3px solid var(--bhi);
+    border-left:   3px solid var(--bhi);
+    border-right:  3px solid var(--bdk);
+    border-bottom: 3px solid var(--bdk);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.12s;
+    box-shadow: 2px 2px 4px rgba(0,0,0,0.25);
+}
+
+.conv-record-btn img {
+    width: 36px;
+    height: 36px;
+    image-rendering: pixelated;
+}
+
+.conv-record-btn:hover:not(:disabled) { background: #e0dbd2; }
+[data-theme="dark"] .conv-record-btn:hover:not(:disabled) { background: #3a3a3a; }
+
+.conv-record-btn:active:not(:disabled) {
+    border-top:    3px solid var(--bdk);
+    border-left:   3px solid var(--bdk);
+    border-right:  3px solid var(--bhi);
+    border-bottom: 3px solid var(--bhi);
+}
+
+.conv-record-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.conv-record-btn.recording {
+    background: #cc0000;
+    border-top-color:    #ff6666;
+    border-left-color:   #ff6666;
+    border-right-color:  #660000;
+    border-bottom-color: #660000;
+    animation: conv-rec-pulse 1.1s ease-in-out infinite;
+}
+
+.conv-record-btn.recording img { filter: brightness(0) invert(1); }
+
+@keyframes conv-rec-pulse {
+    0%, 100% { box-shadow: 0 0 0 0  rgba(204,0,0,0.5); }
+    50%       { box-shadow: 0 0 0 14px rgba(204,0,0,0); }
+}
+
+.conv-record-btn.speaking {
+    background: var(--c-navy);
+    border-top-color:    #3333aa;
+    border-left-color:   #3333aa;
+    border-right-color:  #000033;
+    border-bottom-color: #000033;
+    animation: conv-speak-pulse 1.1s ease-in-out infinite;
+}
+
+.conv-record-btn.speaking img { filter: brightness(0) invert(1); }
+
+@keyframes conv-speak-pulse {
+    0%, 100% { box-shadow: 0 0 0 0  rgba(0,0,128,0.5); }
+    50%       { box-shadow: 0 0 0 14px rgba(0,0,128,0); }
+}
+
+/* ── Conv transcript log ── */
+.conv-transcript {
+    width: 100%;
+    max-width: 500px;
+    max-height: 190px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    border-top:    2px solid var(--bsh);
+    border-left:   2px solid var(--bsh);
+    border-right:  2px solid var(--bhi);
+    border-bottom: 2px solid var(--bhi);
+    background: var(--card);
+    font-size: 14px;
+}
+
+.conv-transcript:empty { display: none; }
+
+[data-theme="dark"] .conv-transcript { background: #252525; }
+
+.conv-entry-user {
+    align-self: flex-end;
+    background: var(--msg-user-bg);
+    color: var(--msg-user-txt);
+    padding: 4px 10px;
+    max-width: 88%;
+    font-size: 13px;
+    border-top:    2px solid #3333aa;
+    border-left:   2px solid #3333aa;
+    border-right:  2px solid #000033;
+    border-bottom: 2px solid #000033;
+    word-break: break-word;
+}
+
+.conv-entry-assistant {
+    align-self: flex-start;
+    background: var(--msg-asst-bg);
+    color: var(--msg-asst-txt);
+    padding: 4px 10px;
+    max-width: 88%;
+    font-size: 13px;
+    border-top:    2px solid var(--bsh);
+    border-left:   2px solid var(--bsh);
+    border-right:  2px solid var(--bhi);
+    border-bottom: 2px solid var(--bhi);
+    word-break: break-word;
+}

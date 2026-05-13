@@ -232,6 +232,63 @@ async function handleChat(req, res) {
     json(res, 500, { error: 'Tool loop limit reached without a final response.' });
 }
 
+async function handleTranscribe(req, res) {
+    let body;
+    try { body = JSON.parse(await readBody(req)); }
+    catch { return json(res, 400, { error: 'Invalid JSON body' }); }
+
+    const { audio, mimeType } = body;
+    if (!audio) return json(res, 400, { error: 'No audio data' });
+
+    const audioBuffer = Buffer.from(audio, 'base64');
+    const ext = (mimeType || 'audio/webm').includes('ogg') ? 'ogg' : 'webm';
+    const boundary = 'boundary' + Date.now();
+
+    const formBody = Buffer.concat([
+        Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="audio.${ext}"\r\nContent-Type: ${mimeType || 'audio/webm'}\r\n\r\n`),
+        audioBuffer,
+        Buffer.from(`\r\n--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\nwhisper\r\n--${boundary}--\r\n`)
+    ]);
+
+    return new Promise(resolve => {
+        const opts = {
+            hostname: 'localhost',
+            port: 11434,
+            path: '/v1/audio/transcriptions',
+            method: 'POST',
+            headers: {
+                'Content-Type': `multipart/form-data; boundary=${boundary}`,
+                'Content-Length': formBody.length
+            }
+        };
+
+        const req2 = http.request(opts, r => {
+            const chunks = [];
+            r.on('data', c => chunks.push(c));
+            r.on('end', () => {
+                try {
+                    const data = JSON.parse(Buffer.concat(chunks).toString());
+                    if (data.text) {
+                        console.log(`  [transcribe] "${data.text.slice(0, 60)}"`);
+                        json(res, 200, { text: data.text });
+                    } else {
+                        json(res, 502, { error: 'No transcription returned' });
+                    }
+                } catch {
+                    json(res, 502, { error: 'Invalid response from Whisper' });
+                }
+                resolve();
+            });
+        });
+        req2.on('error', () => {
+            json(res, 502, { error: 'Whisper not available. Install with: ollama pull whisper' });
+            resolve();
+        });
+        req2.write(formBody);
+        req2.end();
+    });
+}
+
 function proxyToOllama(req, res) {
     const ollamaUrl = new URL(req.url, OLLAMA_URL);
     const options = {
@@ -266,6 +323,11 @@ const server = http.createServer((req, res) => {
     // Intercept chat to handle tool-use loop
     if (pathname === '/api/chat' && req.method === 'POST') {
         handleChat(req, res);
+        return;
+    }
+
+    if (pathname === '/api/transcribe' && req.method === 'POST') {
+        handleTranscribe(req, res);
         return;
     }
 

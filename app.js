@@ -31,6 +31,13 @@ const chatsModal       = document.getElementById('chats-modal');
 const newChatBtn       = document.getElementById('new-chat-btn');
 const closeChatsBtn    = document.getElementById('close-chats');
 const chatsListEl      = document.getElementById('chats-list');
+const convModeBtn      = document.getElementById('conv-mode-btn');
+const convModeIcon     = document.getElementById('conv-mode-icon');
+const convPanelEl      = document.getElementById('conv-panel');
+const convStatusEl     = document.getElementById('conv-status');
+const convRecordBtn    = document.getElementById('conv-record-btn');
+const convVisualizerEl = document.getElementById('conv-visualizer');
+const convTranscriptEl = document.getElementById('conv-transcript');
 
 // ── State ──
 
@@ -43,6 +50,13 @@ let pendingImages = []; // { dataUrl, base64 }
 let currentChatId = null;
 let currentChatCreatedAt = null;
 let currentChatTitle = null;
+
+// Conversation mode state
+let convMode = false;
+let convBusy = false;
+let convListening = false;
+let convRecognition = null;
+let convUtterance = null;
 
 // ── Boot ──
 
@@ -134,6 +148,7 @@ function setupEventListeners() {
     imageInput.addEventListener('change', handleImageSelect);
 
     setupVoiceInput();
+    setupConvMode();
 }
 
 // ── Voice input ──
@@ -206,6 +221,205 @@ function setupVoiceInput() {
         setStatus(msg);
         setTimeout(() => setStatus('Ready'), 3000);
     });
+}
+
+// ── Conversation mode ──
+
+function setupConvMode() {
+    convModeBtn.addEventListener('click', () => {
+        if (convMode) exitConvMode();
+        else enterConvMode();
+    });
+
+    convRecordBtn.addEventListener('click', handleConvBtnClick);
+
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+        convRecordBtn.disabled = true;
+        convRecordBtn.title = 'Voice input not supported in this browser';
+        return;
+    }
+
+    convRecognition = new SR();
+    convRecognition.continuous = false;
+    convRecognition.interimResults = false;
+    convRecognition.lang = 'en-US';
+
+    convRecognition.addEventListener('start', () => {
+        convListening = true;
+        convRecordBtn.classList.add('recording');
+        convVisualizerEl.classList.add('active');
+        setConvStatus('Listening…');
+    });
+
+    convRecognition.addEventListener('result', e => {
+        const transcript = Array.from(e.results)
+            .map(r => r[0].transcript)
+            .join('')
+            .trim();
+        if (transcript) handleConvTranscript(transcript);
+    });
+
+    convRecognition.addEventListener('end', () => {
+        convListening = false;
+        convRecordBtn.classList.remove('recording');
+        convVisualizerEl.classList.remove('active');
+        if (!convBusy && convMode) setConvStatus('Tap the microphone to speak');
+    });
+
+    convRecognition.addEventListener('error', e => {
+        convListening = false;
+        convRecordBtn.classList.remove('recording');
+        convVisualizerEl.classList.remove('active');
+        if (!convBusy && convMode) {
+            const msg = e.error === 'not-allowed'
+                ? 'Microphone access denied'
+                : `Voice error: ${e.error}`;
+            setConvStatus(msg);
+            setTimeout(() => { if (!convBusy && convMode) setConvStatus('Tap the microphone to speak'); }, 3000);
+        }
+    });
+}
+
+function enterConvMode() {
+    convMode = true;
+    document.querySelector('.layout').classList.add('conv-mode');
+    convPanelEl.classList.remove('hidden');
+    convModeIcon.src = 'icons/conversationMode_a.png';
+    convModeBtn.title = 'Back to chat';
+    convModeBtn.setAttribute('aria-label', 'Back to chat');
+    setConvStatus('Tap the microphone to speak');
+}
+
+function exitConvMode() {
+    convMode = false;
+    document.querySelector('.layout').classList.remove('conv-mode');
+    convPanelEl.classList.add('hidden');
+    convModeIcon.src = 'icons/conversationMode_b.png';
+    convModeBtn.title = 'Conversation mode';
+    convModeBtn.setAttribute('aria-label', 'Conversation mode');
+
+    if (convListening && convRecognition) convRecognition.stop();
+
+    if (window.speechSynthesis.speaking) {
+        window.speechSynthesis.cancel();
+        convUtterance = null;
+    }
+
+    convBusy = false;
+    convRecordBtn.classList.remove('recording', 'speaking');
+    convRecordBtn.disabled = false;
+    convVisualizerEl.classList.remove('active', 'speaking');
+    setStatus('Ready');
+}
+
+function handleConvBtnClick() {
+    if (convBusy) {
+        // Stop TTS if speaking, allowing a new recording
+        if (window.speechSynthesis.speaking) {
+            window.speechSynthesis.cancel();
+            convUtterance = null;
+            convBusy = false;
+            convRecordBtn.classList.remove('speaking');
+            convVisualizerEl.classList.remove('speaking');
+            setConvStatus('Tap the microphone to speak');
+        }
+        return;
+    }
+
+    if (convListening) {
+        if (convRecognition) convRecognition.stop();
+    } else {
+        if (convRecognition) {
+            try { convRecognition.start(); } catch {}
+        }
+    }
+}
+
+async function handleConvTranscript(transcript) {
+    if (!settings.tunnelUrl) {
+        setConvStatus('No tunnel URL — open Settings first');
+        setTimeout(() => { if (!convBusy && convMode) setConvStatus('Tap the microphone to speak'); }, 3000);
+        return;
+    }
+
+    convBusy = true;
+    convRecordBtn.disabled = true;
+
+    // Log user message to conv transcript strip and main chat
+    addConvEntry('user', transcript);
+    welcomeEl.classList.add('hidden');
+    appendMessage('user', transcript);
+    messages.push({ role: 'user', content: transcript });
+
+    setConvStatus('Thinking…');
+
+    try {
+        const reply = await callOllama(messages);
+        messages.push({ role: 'assistant', content: reply });
+        appendMessage('assistant', reply);
+        saveCurrentChat();
+        addConvEntry('assistant', reply);
+        await speakConvReply(reply);
+    } catch (err) {
+        setConvStatus('Error: ' + err.message);
+        convBusy = false;
+        convRecordBtn.disabled = false;
+        setTimeout(() => { if (!convBusy && convMode) setConvStatus('Tap the microphone to speak'); }, 4000);
+    }
+}
+
+function addConvEntry(role, text) {
+    const el = document.createElement('div');
+    el.className = role === 'user' ? 'conv-entry-user' : 'conv-entry-assistant';
+    el.textContent = text;
+    convTranscriptEl.appendChild(el);
+    convTranscriptEl.scrollTop = convTranscriptEl.scrollHeight;
+}
+
+function speakConvReply(text) {
+    return new Promise(resolve => {
+        convRecordBtn.classList.remove('processing');
+        convRecordBtn.classList.add('speaking');
+        convRecordBtn.disabled = false; // allow clicking to interrupt
+        convVisualizerEl.classList.add('speaking');
+        setConvStatus('Speaking… (tap to stop)');
+
+        // Strip markdown so TTS reads clean text
+        const plain = text
+            .replace(/```[\s\S]*?```/g, '')
+            .replace(/`([^`]+)`/g, '$1')
+            .replace(/#{1,6}\s+/g, '')
+            .replace(/\*{1,3}([^*\n]+)\*{1,3}/g, '$1')
+            .replace(/_([^_\n]+)_/g, '$1')
+            .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+            .replace(/^>\s+/gm, '')
+            .trim();
+
+        convUtterance = new SpeechSynthesisUtterance(plain);
+        convUtterance.lang = 'en-US';
+        convUtterance.rate = 1;
+        convUtterance.pitch = 1;
+
+        const done = () => {
+            convRecordBtn.classList.remove('speaking');
+            convVisualizerEl.classList.remove('speaking');
+            convBusy = false;
+            convUtterance = null;
+            if (convMode) setConvStatus('Tap the microphone to speak');
+            resolve();
+        };
+
+        convUtterance.onend  = done;
+        convUtterance.onerror = done;
+
+        window.speechSynthesis.speak(convUtterance);
+    });
+}
+
+function setConvStatus(text) {
+    if (convStatusEl) convStatusEl.textContent = text;
+    setStatus(text);
 }
 
 function openSettings()  { applySettings(); settingsModal.classList.remove('hidden'); }

@@ -17,6 +17,11 @@
                 <span class="header-title">DanGPT</span>
                 <span id="model-badge" class="model-badge"></span>
             </div>
+            <div class="header-center">
+                <button id="conv-mode-btn" class="icon-btn" title="Conversation mode" aria-label="Conversation mode">
+                    <img id="conv-mode-icon" src="icons/conversationMode_b.png" alt="" width="20" height="20">
+                </button>
+            </div>
             <div class="header-right">
                 <button id="chats-btn" class="icon-btn" title="Saved chats" aria-label="Saved chats">
                     <img src="icons/history.png" alt="" width="16" height="16">
@@ -102,6 +107,22 @@
                 <p class="welcome-hint">Enter to send &nbsp;&middot;&nbsp; Shift+Enter for new line</p>
             </div>
         </main>
+
+        <!-- Conversation mode panel -->
+        <div id="conv-panel" class="conv-panel hidden" aria-label="Conversation mode">
+            <div class="conv-status-text" id="conv-status">Tap the microphone to speak</div>
+            <div class="conv-visualizer" id="conv-visualizer">
+                <div class="conv-wave"></div>
+                <div class="conv-wave"></div>
+                <div class="conv-wave"></div>
+                <div class="conv-wave"></div>
+                <div class="conv-wave"></div>
+            </div>
+            <button id="conv-record-btn" class="conv-record-btn" title="Start recording" aria-label="Start recording">
+                <img id="conv-record-icon" src="icons/microphone-0.png" alt="" width="32" height="32">
+            </button>
+            <div class="conv-transcript" id="conv-transcript"></div>
+        </div>
 
         <!-- Input area -->
         <div class="input-area">
