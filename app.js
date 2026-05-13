@@ -1,77 +1,64 @@
 'use strict';
 
-const SETTINGS_KEY  = 'chat_settings_v1';
-const LAST_CHAT_KEY = 'last_chat_id';
+const STORAGE_KEY = 'calorie_log_v1';
+const SETTINGS_KEY = 'calorie_settings_v1';
 
-const DEFAULT_SYSTEM_PROMPT = `You are a helpful, knowledgeable assistant. Answer clearly and concisely. Use markdown formatting where it helps readability — code blocks for code, bullet points for lists, bold for key terms.`;
+const SYSTEM_PROMPT = `You are a calorie estimation assistant. The user will describe food they have eaten.
+You must respond ONLY with a valid JSON object and nothing else — no explanation, no markdown formatting, no code fences, no prose.
+Use this exact structure:
+{
+  "items": [
+    { "name": "food item description", "calories": 150 }
+  ],
+  "total_calories": 150,
+  "notes": "brief note about the estimates, or empty string if nothing notable"
+}
+Rules:
+- Estimate based on typical serving sizes when quantities are not specified.
+- Keep item names short and clear.
+- total_calories must equal the sum of all item calories.
+- Respond with ONLY the JSON object, nothing else.
 
+Known calorie values:
+Huel drink = 400`;
 
-// ── DOM ──
+// ── DOM references ──
 
-const messagesEl       = document.getElementById('messages');
-const welcomeEl        = document.getElementById('welcome');
-const userInputEl      = document.getElementById('user-input');
-const sendBtn          = document.getElementById('send-btn');
-const clearBtn         = document.getElementById('clear-btn');
-const settingsBtn      = document.getElementById('settings-btn');
-const darkModeBtn      = document.getElementById('dark-mode-btn');
-const settingsModal    = document.getElementById('settings-modal');
-const tunnelUrlIn      = document.getElementById('tunnel-url');
-const modelNameIn      = document.getElementById('model-name');
-const systemPromptIn   = document.getElementById('system-prompt');
+const voiceBtn       = document.getElementById('voice-btn');
+const voiceStatus    = document.getElementById('voice-status');
+const mealInput      = document.getElementById('meal-input');
+const logBtn         = document.getElementById('log-btn');
+const loadingEl      = document.getElementById('loading');
+const logEntriesEl   = document.getElementById('log-entries');
+const totalCaloriesEl= document.getElementById('total-calories');
+const currentDateEl  = document.getElementById('current-date');
+const errorBanner    = document.getElementById('error-banner');
+const settingsBtn    = document.getElementById('settings-btn');
+const settingsModal  = document.getElementById('settings-modal');
+const tunnelUrlInput = document.getElementById('tunnel-url');
+const modelNameInput = document.getElementById('model-name');
 const saveSettingsBtn  = document.getElementById('save-settings');
 const closeSettingsBtn = document.getElementById('close-settings');
-const modelBadge       = document.getElementById('model-badge');
-const braveApiKeyIn    = document.getElementById('brave-api-key');
-const imageBtn         = document.getElementById('image-btn');
-const imageInput       = document.getElementById('image-input');
-const imagePreviewBar  = document.getElementById('image-preview-bar');
-const chatsBtn         = document.getElementById('chats-btn');
-const chatsModal       = document.getElementById('chats-modal');
-const newChatBtn       = document.getElementById('new-chat-btn');
-const closeChatsBtn    = document.getElementById('close-chats');
-const chatsListEl      = document.getElementById('chats-list');
+const cancelSettingsBtn= document.getElementById('cancel-settings');
+const targetKcalInput  = document.getElementById('target-kcal');
+const statsContent   = document.getElementById('stats-content');
+const streakDisplay  = document.getElementById('streak-display');
 
 // ── State ──
 
-let settings = loadSettings();
-let messages = []; // { role, content, images?, imageUrls? }
-let messageEls = []; // parallel DOM elements for each entry in messages
-let busy = false;
-let darkMode = localStorage.getItem('darkMode') === 'true';
-let pendingImages = []; // { dataUrl, base64 }
-let currentChatId = null;
-let currentChatCreatedAt = null;
-let currentChatTitle = null;
+let settings    = loadSettings();
+let recognition = null;
+let isRecording = false;
 
 // ── Boot ──
 
 async function init() {
-    applySettings();
-    applyDarkMode();
+    currentDateEl.textContent = formatDate(new Date());
+    tunnelUrlInput.value = settings.tunnelUrl || '';
+    modelNameInput.value = settings.model || 'llama3.2';
+    setupSpeechRecognition();
     setupEventListeners();
-    await restoreLastChat();
-    userInputEl.focus();
-}
-
-// ── Dark mode ──
-
-function applyDarkMode() {
-    document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
-    darkModeBtn.innerHTML = `<img src="icons/${darkMode ? 'mode-light' : 'mode-dark'}.png" alt="" width="16" height="16">`;
-    darkModeBtn.title = darkMode ? 'Switch to light mode' : 'Switch to dark mode';
-    darkModeBtn.setAttribute('aria-label', darkMode ? 'Switch to light mode' : 'Switch to dark mode');
-
-    const newChatIcon = document.getElementById('new-chat-icon');
-    if (newChatIcon) newChatIcon.src = `icons/${darkMode ? 'new_chat_light' : 'new_chat_dark'}.png`;
-    const newChatModalIcon = document.getElementById('new-chat-modal-icon');
-    if (newChatModalIcon) newChatModalIcon.src = `icons/${darkMode ? 'new_chat_light' : 'new_chat_dark'}.png`;
-}
-
-function toggleDarkMode() {
-    darkMode = !darkMode;
-    localStorage.setItem('darkMode', String(darkMode));
-    applyDarkMode();
+    await refreshView();
 }
 
 // ── Settings ──
@@ -81,460 +68,193 @@ function loadSettings() {
     catch { return {}; }
 }
 
-function applySettings() {
-    const model = settings.model || 'llama3.2';
-    modelBadge.textContent = model;
-    tunnelUrlIn.value    = settings.tunnelUrl    || '';
-    modelNameIn.value    = settings.model        || '';
-    braveApiKeyIn.value  = settings.braveApiKey  || '';
-    systemPromptIn.value = settings.systemPrompt || DEFAULT_SYSTEM_PROMPT;
-}
-
 function persistSettings() {
-    settings.tunnelUrl    = tunnelUrlIn.value.trim().replace(/\/+$/, '');
-    settings.model        = modelNameIn.value.trim() || 'llama3.2';
-    settings.braveApiKey  = braveApiKeyIn.value.trim();
-    settings.systemPrompt = systemPromptIn.value.trim() || DEFAULT_SYSTEM_PROMPT;
+    settings.tunnelUrl  = tunnelUrlInput.value.trim().replace(/\/+$/, '');
+    settings.model      = modelNameInput.value.trim() || 'llama3.2';
+    settings.targetKcal = parseInt(targetKcalInput.value) || 0;
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-    applySettings();
 }
 
-// ── Events ──
+// ── Event wiring ──
 
 function setupEventListeners() {
     settingsBtn.addEventListener('click', openSettings);
     saveSettingsBtn.addEventListener('click', () => { persistSettings(); closeSettings(); });
     closeSettingsBtn.addEventListener('click', closeSettings);
-    document.getElementById('close-settings-x').addEventListener('click', closeSettings);
+    cancelSettingsBtn.addEventListener('click', closeSettings);
+    document.getElementById('download-log').addEventListener('click', downloadLog);
+    document.getElementById('upload-log').addEventListener('change', e => {
+        if (e.target.files[0]) uploadLog(e.target.files[0]);
+        e.target.value = '';
+    });
     settingsModal.addEventListener('click', e => { if (e.target === settingsModal) closeSettings(); });
-    document.getElementById('close-chats-x').addEventListener('click', closeChatsPanel);
-    document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeSettings(); closeChatsPanel(); } });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSettings(); });
 
-    darkModeBtn.addEventListener('click', toggleDarkMode);
-    clearBtn.addEventListener('click', newChat);
-    sendBtn.addEventListener('click', handleSend);
-    chatsBtn.addEventListener('click', openChatsPanel);
-    newChatBtn.addEventListener('click', newChat);
-    closeChatsBtn.addEventListener('click', closeChatsPanel);
-    chatsModal.addEventListener('click', e => { if (e.target === chatsModal) closeChatsPanel(); });
+    voiceBtn.addEventListener('click', toggleRecording);
+    logBtn.addEventListener('click', handleLogMeal);
 
-    userInputEl.addEventListener('keydown', e => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            handleSend();
-        }
+    logEntriesEl.addEventListener('click', async e => {
+        const btn = e.target.closest('.log-delete');
+        if (btn) await deleteLogEntry(getTodayKey(), Number(btn.dataset.id));
     });
 
-    userInputEl.addEventListener('input', () => {
-        userInputEl.style.height = 'auto';
-        userInputEl.style.height = userInputEl.scrollHeight + 'px';
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => switchTab(btn.dataset.tab));
     });
-
-    imageBtn.addEventListener('click', () => imageInput.click());
-    imageInput.addEventListener('change', handleImageSelect);
-
-    setupVoiceInput();
 }
 
-// ── Voice input ──
+function openSettings() {
+    tunnelUrlInput.value  = settings.tunnelUrl || '';
+    modelNameInput.value  = settings.model || 'llama3.2';
+    targetKcalInput.value = settings.targetKcal || '';
+    settingsModal.classList.remove('hidden');
+    tunnelUrlInput.focus();
+}
 
-function setupVoiceInput() {
-    const micBtn = document.getElementById('mic-btn');
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+function closeSettings() {
+    settingsModal.classList.add('hidden');
+}
 
-    if (!SpeechRecognition) {
-        micBtn.disabled = true;
-        micBtn.title = 'Voice input not supported in this browser';
+// ── Tabs ──
+
+function switchTab(tab) {
+    document.querySelectorAll('.tab-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.tab === tab);
+        b.setAttribute('aria-selected', b.dataset.tab === tab);
+    });
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
+    document.getElementById(`tab-${tab}`).classList.remove('hidden');
+    if (tab === 'stats') renderStats();
+}
+
+// ── Speech recognition ──
+
+function setupSpeechRecognition() {
+    const w  = /** @type {any} */ (window);
+    const SR = w.SpeechRecognition || w.webkitSpeechRecognition;
+    if (!SR) {
+        voiceStatus.textContent = 'Voice input not supported in this browser (try Chrome)';
+        voiceBtn.disabled = true;
         return;
     }
 
-    const recognition = new SpeechRecognition();
+    recognition = new SR();
     recognition.continuous = false;
     recognition.interimResults = true;
     recognition.lang = 'en-US';
 
-    let isListening = false;
-    let interimStart = 0;
-
-    micBtn.addEventListener('click', () => {
-        if (isListening) {
-            recognition.stop();
-        } else {
-            recognition.start();
-        }
-    });
-
-    recognition.addEventListener('start', () => {
-        isListening = true;
-        micBtn.classList.add('recording');
-        micBtn.title = 'Recording… click to stop';
-        micBtn.setAttribute('aria-label', 'Stop voice input');
-        setStatus('Listening…');
-        interimStart = userInputEl.value.length;
-        if (interimStart > 0 && !userInputEl.value.endsWith(' ')) {
-            userInputEl.value += ' ';
-            interimStart = userInputEl.value.length;
-        }
-    });
-
     recognition.addEventListener('result', e => {
-        const transcript = Array.from(e.results)
-            .map(r => r[0].transcript)
-            .join('');
-        userInputEl.value = userInputEl.value.slice(0, interimStart) + transcript;
-        userInputEl.style.height = 'auto';
-        userInputEl.style.height = userInputEl.scrollHeight + 'px';
+        mealInput.value = Array.from(e.results).map(r => r[0].transcript).join('');
     });
-
     recognition.addEventListener('end', () => {
-        isListening = false;
-        micBtn.classList.remove('recording');
-        micBtn.title = 'Voice input';
-        micBtn.setAttribute('aria-label', 'Start voice input');
-        setStatus('Ready');
-        userInputEl.focus();
+        isRecording = false;
+        voiceBtn.classList.remove('recording');
+        voiceStatus.textContent = 'Tap to speak';
     });
-
     recognition.addEventListener('error', e => {
-        isListening = false;
-        micBtn.classList.remove('recording');
-        micBtn.title = 'Voice input';
-        micBtn.setAttribute('aria-label', 'Start voice input');
-        const msg = e.error === 'not-allowed'
-            ? 'Microphone access denied'
-            : `Voice error: ${e.error}`;
-        setStatus(msg);
-        setTimeout(() => setStatus('Ready'), 3000);
+        isRecording = false;
+        voiceBtn.classList.remove('recording');
+        voiceStatus.textContent = e.error === 'not-allowed' ? 'Microphone access denied' : `Error: ${e.error}`;
     });
 }
 
-function openSettings()  { applySettings(); settingsModal.classList.remove('hidden'); }
-function closeSettings() { settingsModal.classList.add('hidden'); }
-
-// ── Chat history ──
-
-function generateChatId() {
-    return 'chat_' + Date.now();
+function toggleRecording() {
+    if (!recognition) return;
+    if (isRecording) {
+        recognition.stop();
+    } else {
+        mealInput.value = '';
+        recognition.start();
+        isRecording = true;
+        voiceBtn.classList.add('recording');
+        voiceStatus.textContent = 'Listening...';
+    }
 }
 
-async function getChatTitle() {
-    if (currentChatTitle) return currentChatTitle;
+// ── Data layer ──
 
-    const first = messages.find(m => m.role === 'user');
-    if (!first) return 'New Chat';
-
-    const fallback = (() => {
-        const text = (typeof first.content === 'string' ? first.content : 'Image conversation').trim();
-        return text.length > 45 ? text.slice(0, 42) + '...' : text;
-    })();
-
-    if (!settings.tunnelUrl || messages.length < 2) return fallback;
-
-    try {
-        const transcript = messages
-            .map(m => `${m.role}: ${typeof m.content === 'string' ? m.content : '[image]'}`)
-            .join('\n');
-        const response = await fetch(`${settings.tunnelUrl}/api/chat`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                model: settings.model || 'llama3.2',
-                messages: [
-                    { role: 'system', content: 'Generate a chat title of 6 words or fewer. Reply with ONLY the title, no punctuation, no quotes, no explanation.' },
-                    { role: 'user', content: transcript }
-                ],
-                stream: false
-            })
-        });
-        if (response.ok) {
-            const data = await response.json();
-            const title = data?.message?.content?.trim().replace(/^["']+|["']+$/g, '');
-            if (title) {
-                currentChatTitle = title;
-                return currentChatTitle;
+// Returns the full log, preferring the server and falling back to localStorage cache.
+async function loadLog() {
+    if (settings.tunnelUrl) {
+        try {
+            const res = await fetch(`${settings.tunnelUrl}/log`);
+            if (res.ok) {
+                const data = await res.json();
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+                return data;
             }
-        }
-    } catch {}
-
-    return fallback;
+        } catch { /* fall through */ }
+    }
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; }
+    catch { return {}; }
 }
 
-async function saveCurrentChat() {
-    if (messages.length === 0 || !settings.tunnelUrl) return;
-    if (!currentChatId) {
-        currentChatId = generateChatId();
-        currentChatCreatedAt = Date.now();
-    }
-    try {
-        await fetch(`${settings.tunnelUrl}/api/chats/${currentChatId}`, {
+// Adds a single entry to the server (and updates the localStorage cache).
+async function saveEntry(date, entry) {
+    if (settings.tunnelUrl) {
+        const res = await fetch(`${settings.tunnelUrl}/log`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                id: currentChatId,
-                title: await getChatTitle(),
-                createdAt: currentChatCreatedAt,
-                updatedAt: Date.now(),
-                messages: messages.slice()
-            })
+            body: JSON.stringify({ date, entry })
         });
-        localStorage.setItem(LAST_CHAT_KEY, currentChatId);
-    } catch {}
+        if (!res.ok) throw new Error(`Server error ${res.status}`);
+    }
+
+    // Keep localStorage in sync as a cache
+    const log = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
+    if (!log[date]) log[date] = [];
+    log[date].push(entry);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(log));
 }
 
-async function loadChat(id) {
-    if (!settings.tunnelUrl) return;
-    await saveCurrentChat();
-    try {
-        const r = await fetch(`${settings.tunnelUrl}/api/chats/${id}`);
-        if (!r.ok) return;
-        const chat = await r.json();
-        currentChatId = chat.id;
-        currentChatCreatedAt = chat.createdAt;
-        currentChatTitle = chat.title || null;
-        messages = chat.messages.slice();
-        messageEls = [];
-        localStorage.setItem(LAST_CHAT_KEY, currentChatId);
-        messagesEl.innerHTML = '';
-        messagesEl.appendChild(welcomeEl);
-        if (messages.length === 0) {
-            welcomeEl.classList.remove('hidden');
-        } else {
-            welcomeEl.classList.add('hidden');
-            messages.forEach(m => appendMessage(m.role, m.content, m.imageUrls || []));
-        }
-        closeChatsPanel();
-        userInputEl.focus();
-    } catch {}
-}
-
-async function deleteChat(id) {
+// Removes an entry from the server (and updates the localStorage cache).
+async function removeEntry(date, id) {
     if (settings.tunnelUrl) {
-        try {
-            await fetch(`${settings.tunnelUrl}/api/chats/${id}`, { method: 'DELETE' });
-        } catch {}
+        await fetch(`${settings.tunnelUrl}/log/${date}/${id}`, { method: 'DELETE' });
     }
-    if (currentChatId === id) {
-        currentChatId = null;
-        currentChatCreatedAt = null;
-        currentChatTitle = null;
-        localStorage.removeItem(LAST_CHAT_KEY);
+
+    const log = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
+    if (log[date]) {
+        log[date] = log[date].filter(e => e.id !== id);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(log));
     }
-    renderChatsList();
 }
 
-async function restoreLastChat() {
-    if (!settings.tunnelUrl) return;
-    const lastId = localStorage.getItem(LAST_CHAT_KEY);
-    if (!lastId) return;
+// ── Meal logging ──
+
+async function handleLogMeal() {
+    const text = mealInput.value.trim();
+    if (!text) { showError('Please describe what you ate first.'); return; }
+    if (!settings.tunnelUrl) { showError('No tunnel URL set. Open Settings and paste your Cloudflare tunnel URL.'); return; }
+
+    clearError();
+    setLoading(true);
+
     try {
-        const r = await fetch(`${settings.tunnelUrl}/api/chats/${lastId}`);
-        if (!r.ok) return;
-        const chat = await r.json();
-        if (!chat.messages?.length) return;
-        currentChatId = chat.id;
-        currentChatCreatedAt = chat.createdAt;
-        currentChatTitle = chat.title || null;
-        messages = chat.messages.slice();
-        messageEls = [];
-        welcomeEl.classList.add('hidden');
-        messages.forEach(m => appendMessage(m.role, m.content, m.imageUrls || []));
-    } catch {}
-}
-
-function formatChatDate(ts) {
-    const d = new Date(ts);
-    const diffDays = Math.floor((Date.now() - ts) / 86400000);
-    if (diffDays === 0) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    if (diffDays === 1) return 'Yesterday';
-    if (diffDays < 7) return d.toLocaleDateString([], { weekday: 'long' });
-    return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
-}
-
-async function renderChatsList() {
-    chatsListEl.innerHTML = '<div class="chats-empty">Loading…</div>';
-    let chats = [];
-    if (settings.tunnelUrl) {
-        try {
-            const r = await fetch(`${settings.tunnelUrl}/api/chats`);
-            if (r.ok) chats = await r.json();
-        } catch {}
-    }
-    chatsListEl.innerHTML = '';
-    if (chats.length === 0) {
-        const empty = document.createElement('div');
-        empty.className = 'chats-empty';
-        empty.textContent = settings.tunnelUrl ? 'No saved chats yet.' : 'Set a tunnel URL in Settings to use chat history.';
-        chatsListEl.appendChild(empty);
-        return;
-    }
-    chats.forEach(chat => {
-        const item = document.createElement('div');
-        item.className = 'chat-item' + (chat.id === currentChatId ? ' active' : '');
-
-        const info = document.createElement('div');
-        info.className = 'chat-item-info';
-
-        const title = document.createElement('div');
-        title.className = 'chat-item-title';
-        title.textContent = chat.title;
-
-        const meta = document.createElement('div');
-        meta.className = 'chat-item-meta';
-        meta.textContent = formatChatDate(chat.updatedAt);
-
-        info.appendChild(title);
-        info.appendChild(meta);
-
-        const del = document.createElement('button');
-        del.className = 'chat-item-delete';
-        del.setAttribute('aria-label', 'Delete chat');
-        del.innerHTML = `<img src="icons/delete.png" alt="Delete" width="13" height="13">`;
-        del.addEventListener('click', e => { e.stopPropagation(); deleteChat(chat.id); });
-
-        item.appendChild(info);
-        item.appendChild(del);
-        item.addEventListener('click', () => loadChat(chat.id));
-        chatsListEl.appendChild(item);
-    });
-}
-
-function openChatsPanel()  { chatsModal.classList.remove('hidden'); renderChatsList(); }
-function closeChatsPanel() { chatsModal.classList.add('hidden'); }
-
-async function newChat() {
-    await saveCurrentChat();
-    currentChatId = null;
-    currentChatCreatedAt = null;
-    currentChatTitle = null;
-    localStorage.removeItem(LAST_CHAT_KEY);
-    messages = [];
-    messageEls = [];
-    pendingImages = [];
-    renderImagePreviews();
-    messagesEl.innerHTML = '';
-    messagesEl.appendChild(welcomeEl);
-    welcomeEl.classList.remove('hidden');
-    closeChatsPanel();
-    userInputEl.focus();
-}
-
-// ── Image handling ──
-
-const IMAGE_MAX_PX  = 1024; // longest side cap before sending to API / saving
-const IMAGE_QUALITY = 0.82;  // JPEG compression quality (0–1)
-
-function compressImage(dataUrl) {
-    return new Promise(resolve => {
-        const img = new Image();
-        img.onload = () => {
-            const scale = Math.min(1, IMAGE_MAX_PX / Math.max(img.width, img.height));
-            const w = Math.round(img.width  * scale);
-            const h = Math.round(img.height * scale);
-            const canvas = document.createElement('canvas');
-            canvas.width  = w;
-            canvas.height = h;
-            canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-            const compressed = canvas.toDataURL('image/jpeg', IMAGE_QUALITY);
-            resolve({ dataUrl: compressed, base64: compressed.split(',')[1] });
+        const result = await callOllama(text);
+        const entry = {
+            id: Date.now(),
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            items: result.items,
+            total: result.total_calories,
+            notes: result.notes || ''
         };
-        img.src = dataUrl;
-    });
-}
-
-function handleImageSelect() {
-    const files = Array.from(imageInput.files);
-    const readers = files.map(file => new Promise(resolve => {
-        const reader = new FileReader();
-        reader.onload = e => compressImage(e.target.result).then(resolve);
-        reader.readAsDataURL(file);
-    }));
-    Promise.all(readers).then(imgs => {
-        pendingImages.push(...imgs);
-        imageInput.value = '';
-        renderImagePreviews();
-    });
-}
-
-function renderImagePreviews() {
-    if (pendingImages.length === 0) {
-        imagePreviewBar.classList.add('hidden');
-        imagePreviewBar.innerHTML = '';
-        return;
-    }
-    imagePreviewBar.classList.remove('hidden');
-    imagePreviewBar.innerHTML = '';
-    pendingImages.forEach((img, i) => {
-        const wrap = document.createElement('div');
-        wrap.className = 'preview-thumb';
-
-        const imgEl = document.createElement('img');
-        imgEl.src = img.dataUrl;
-        imgEl.alt = '';
-
-        const removeBtn = document.createElement('button');
-        removeBtn.className = 'preview-remove';
-        removeBtn.setAttribute('aria-label', 'Remove image');
-        removeBtn.textContent = '×';
-        removeBtn.addEventListener('click', () => {
-            pendingImages.splice(i, 1);
-            renderImagePreviews();
-        });
-
-        wrap.appendChild(imgEl);
-        wrap.appendChild(removeBtn);
-        imagePreviewBar.appendChild(wrap);
-    });
-}
-
-// ── Send ──
-
-async function handleSend() {
-    const text = userInputEl.value.trim();
-    if ((!text && pendingImages.length === 0) || busy) return;
-
-    if (!settings.tunnelUrl) {
-        showError('No tunnel URL set. Open Settings and paste your Cloudflare tunnel URL.');
-        return;
-    }
-
-    welcomeEl.classList.add('hidden');
-
-    const images = [...pendingImages];
-    pendingImages = [];
-    renderImagePreviews();
-
-    const userMsg = { role: 'user', content: text };
-    if (images.length > 0) {
-        userMsg.images    = images.map(i => i.base64);
-        userMsg.imageUrls = images.map(i => i.dataUrl);
-    }
-
-    appendMessage('user', text, images.map(i => i.dataUrl));
-    messages.push(userMsg);
-
-    userInputEl.value = '';
-    userInputEl.style.height = 'auto';
-
-    const typingEl = appendTypingIndicator();
-    setBusy(true);
-
-    try {
-        const reply = await callOllama(messages);
-        typingEl.remove();
-        appendMessage('assistant', reply);
-        messages.push({ role: 'assistant', content: reply });
-        saveCurrentChat();
+        await saveEntry(getTodayKey(), entry);
+        mealInput.value = '';
+        await refreshView();
     } catch (err) {
-        typingEl.remove();
         showError(err.message);
     } finally {
-        setBusy(false);
-        userInputEl.focus();
+        setLoading(false);
     }
 }
 
-async function callOllama(history) {
-    const systemPrompt = settings.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+async function deleteLogEntry(date, id) {
+    await removeEntry(date, id);
+    await refreshView();
+}
+
+async function callOllama(mealDescription) {
     const model = settings.model || 'llama3.2';
 
     let response;
@@ -545,272 +265,329 @@ async function callOllama(history) {
             body: JSON.stringify({
                 model,
                 messages: [
-                    { role: 'system', content: systemPrompt },
-                    ...history.map(({ imageUrls, ...rest }) => rest)
+                    { role: 'system', content: SYSTEM_PROMPT },
+                    { role: 'user', content: mealDescription }
                 ],
-                stream: false,
-                ...(settings.braveApiKey ? { braveApiKey: settings.braveApiKey } : {})
+                stream: false
             })
         });
     } catch {
-        throw new Error('Could not reach your home PC. Check that the tunnel is running and the URL is up to date in Settings.');
+        throw new Error('Could not reach your home PC. Check that the server is running and the tunnel is active.');
     }
 
     if (!response.ok) throw new Error(`Ollama error (HTTP ${response.status}). Check the model name in Settings.`);
 
     const data = await response.json();
-    return data?.message?.content ?? '';
-}
+    const raw = data?.message?.content ?? '';
+    const cleaned = raw.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim();
 
-// ── Rendering ──
-
-function appendMessage(role, content, imageUrls = []) {
-    const msgIndex = messageEls.length;
-    const msg = document.createElement('div');
-    msg.className = `msg ${role}`;
-
-    const header = document.createElement('div');
-    header.className = 'msg-header';
-
-    const label = document.createElement('div');
-    label.className = 'msg-label';
-    label.textContent = role === 'user' ? 'You' : (settings.model || 'Assistant');
-    header.appendChild(label);
-
-    if (role === 'user') {
-        const editBtn = document.createElement('button');
-        editBtn.className = 'msg-edit-btn';
-        editBtn.title = 'Edit message';
-        editBtn.setAttribute('aria-label', 'Edit message');
-        editBtn.textContent = '✏';
-        editBtn.addEventListener('click', () => enterEditMode(msg, msgIndex));
-        header.appendChild(editBtn);
+    let parsed;
+    try { parsed = JSON.parse(cleaned); }
+    catch {
+        throw new Error(`The model returned invalid JSON. Try rephrasing.\n\nResponse: "${cleaned.slice(0, 200)}"`);
     }
 
-    msg.appendChild(header);
-
-    if (imageUrls.length > 0) {
-        const imgRow = document.createElement('div');
-        imgRow.className = 'bubble-images';
-        imageUrls.forEach(url => {
-            const img = document.createElement('img');
-            img.src = url;
-            img.className = 'bubble-image';
-            img.alt = 'Attached image';
-            imgRow.appendChild(img);
-        });
-        msg.appendChild(imgRow);
+    if (!Array.isArray(parsed.items) || typeof parsed.total_calories !== 'number') {
+        throw new Error('Unexpected response format. Try a different model.');
     }
 
-    if (content) {
-        const bubble = document.createElement('div');
-        bubble.className = 'bubble';
-        bubble.innerHTML = role === 'assistant'
-            ? parseMarkdown(content)
-            : escapeHtml(content).replace(/\n/g, '<br>');
-        msg.appendChild(bubble);
-    }
-
-    messagesEl.appendChild(msg);
-    messageEls.push(msg);
-    scrollToBottom();
-    return msg;
+    return parsed;
 }
 
-function enterEditMode(msgEl, msgIndex) {
-    if (busy) return;
-    const bubble = msgEl.querySelector('.bubble');
-    if (!bubble) return;
+// ── Import / Export ──
 
-    const originalContent = messages[msgIndex].content;
-    bubble.remove();
-
-    const editArea = document.createElement('div');
-    editArea.className = 'edit-area';
-
-    const textarea = document.createElement('textarea');
-    textarea.className = 'edit-textarea';
-    textarea.value = originalContent;
-
-    textarea.addEventListener('input', () => {
-        textarea.style.height = 'auto';
-        textarea.style.height = textarea.scrollHeight + 'px';
-    });
-
-    const actions = document.createElement('div');
-    actions.className = 'edit-actions';
-
-    const saveBtn = document.createElement('button');
-    saveBtn.className = 'btn primary';
-    saveBtn.textContent = 'Save & Send';
-    saveBtn.addEventListener('click', () => {
-        const newText = textarea.value.trim();
-        if (newText) submitEdit(msgIndex, newText);
-    });
-
-    const cancelBtn = document.createElement('button');
-    cancelBtn.className = 'btn';
-    cancelBtn.textContent = 'Cancel';
-    cancelBtn.addEventListener('click', () => cancelEdit(msgEl, originalContent, editArea));
-
-    actions.appendChild(saveBtn);
-    actions.appendChild(cancelBtn);
-    editArea.appendChild(textarea);
-    editArea.appendChild(actions);
-    msgEl.appendChild(editArea);
-
-    textarea.focus();
-    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-
-    textarea.addEventListener('keydown', e => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            const newText = textarea.value.trim();
-            if (newText) submitEdit(msgIndex, newText);
-        }
-        if (e.key === 'Escape') cancelEdit(msgEl, originalContent, editArea);
-    });
+async function downloadLog() {
+    const log = await loadLog();
+    const blob = new Blob([JSON.stringify(log, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `calorie-log-${getTodayKey()}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
 }
 
-function cancelEdit(msgEl, originalContent, editArea) {
-    editArea.remove();
-    const bubble = document.createElement('div');
-    bubble.className = 'bubble';
-    bubble.innerHTML = escapeHtml(originalContent).replace(/\n/g, '<br>');
-    msgEl.appendChild(bubble);
-}
-
-async function submitEdit(msgIndex, newText) {
-    if (!settings.tunnelUrl) {
-        showError('No tunnel URL set. Open Settings and paste your Cloudflare tunnel URL.');
+async function uploadLog(file) {
+    let data;
+    try {
+        data = JSON.parse(await file.text());
+    } catch {
+        showError('Could not read file — make sure it is a valid JSON log.');
         return;
     }
 
-    const origMsg = messages[msgIndex];
-    const imageUrls = origMsg.imageUrls || [];
-    const images = origMsg.images || [];
-
-    // Remove all message DOM elements from msgIndex onwards
-    for (let i = msgIndex; i < messageEls.length; i++) {
-        messageEls[i].remove();
-    }
-    // Remove any stray typing indicators / error bubbles after the last kept message
-    const lastKept = msgIndex > 0 ? messageEls[msgIndex - 1] : welcomeEl;
-    let next = lastKept.nextSibling;
-    while (next) {
-        const toRemove = next;
-        next = next.nextSibling;
-        toRemove.remove();
+    if (typeof data !== 'object' || Array.isArray(data)) {
+        showError('Unrecognised format — file must be a calorie log JSON object.');
+        return;
     }
 
-    messageEls.length = msgIndex;
-    messages.length = msgIndex;
-
-    const userMsg = { role: 'user', content: newText };
-    if (images.length > 0) {
-        userMsg.images = images;
-        userMsg.imageUrls = imageUrls;
+    if (settings.tunnelUrl) {
+        const res = await fetch(`${settings.tunnelUrl}/log`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        if (!res.ok) { showError('Failed to upload log to server.'); return; }
     }
 
-    appendMessage('user', newText, imageUrls);
-    messages.push(userMsg);
-
-    const typingEl = appendTypingIndicator();
-    setBusy(true);
-
-    try {
-        const reply = await callOllama(messages);
-        typingEl.remove();
-        appendMessage('assistant', reply);
-        messages.push({ role: 'assistant', content: reply });
-        saveCurrentChat();
-    } catch (err) {
-        typingEl.remove();
-        showError(err.message);
-    } finally {
-        setBusy(false);
-        userInputEl.focus();
-    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    closeSettings();
+    await refreshView();
 }
 
-function appendTypingIndicator() {
-    const el = document.createElement('div');
-    el.className = 'typing-indicator';
-    el.innerHTML = '<span></span><span></span><span></span>';
-    messagesEl.appendChild(el);
-    scrollToBottom();
-    return el;
+// ── View ──
+
+async function refreshView() {
+    const log = await loadLog();
+    renderStreak(log);
+    renderTodayLog(log);
+}
+
+function renderStreak(log) {
+    const today     = getTodayKey();
+    const yesterday = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+
+    const sortedDates = Object.keys(log)
+        .filter(d => (log[d] || []).some(e => e.total > 0))
+        .sort();
+
+    const streak       = calcStreak(sortedDates);
+    const loggedToday  = sortedDates.includes(today);
+    const hasStreak    = streak > 0;
+    const atRisk       = !loggedToday && sortedDates.includes(yesterday) && hasStreak;
+
+    let state, title, sub, displayCount;
+
+    if (loggedToday && hasStreak) {
+        state = 'active'; displayCount = streak;
+        title = `${streak} day streak`;
+        sub = streak === 1 ? 'Logged today — come back tomorrow!' : 'Logged today — keep it up!';
+    } else if (atRisk) {
+        state = 'risk'; displayCount = streak;
+        title = `${streak} day streak at risk`;
+        sub = 'Log a meal today before midnight to keep it going!';
+    } else {
+        state = 'none'; displayCount = 0;
+        title = hasStreak ? 'Streak ended' : '0 day streak';
+        sub = hasStreak
+            ? `Best was ${streak} days. Start a new one by logging today.`
+            : 'Log every day to build your streak.';
+    }
+
+    streakDisplay.innerHTML = `
+        <div class="streak-bar state-${state}">
+            <span class="streak-count">${displayCount}</span>
+            <div class="streak-text">
+                <span class="streak-title">${escapeHtml(title)}</span>
+                <span class="streak-sub">${escapeHtml(sub)}</span>
+            </div>
+        </div>
+    `;
+}
+
+function renderTodayLog(log) {
+    const today   = getTodayKey();
+    const entries = log[today] || [];
+    const total   = entries.reduce((s, e) => s + e.total, 0);
+
+    totalCaloriesEl.textContent = `${total} kcal`;
+
+    if (entries.length === 0) {
+        logEntriesEl.innerHTML = '<p class="empty-log">No meals logged today</p>';
+        return;
+    }
+
+    logEntriesEl.innerHTML = entries.map(entry => `
+        <div class="log-entry">
+            <div class="log-entry-header">
+                <span class="log-entry-time">${escapeHtml(entry.time)}</span>
+                <div class="log-entry-right">
+                    <span class="log-entry-kcal">${entry.total} kcal</span>
+                    <button class="log-delete" data-id="${entry.id}" aria-label="Delete entry">remove</button>
+                </div>
+            </div>
+            ${entry.items.map(item => `
+                <div class="log-item">
+                    <span class="log-item-name">${escapeHtml(item.name)}</span>
+                    <span class="log-item-cal">${item.calories} kcal</span>
+                </div>
+            `).join('')}
+            ${entry.notes ? `<p class="log-entry-note">${escapeHtml(entry.notes)}</p>` : ''}
+        </div>
+    `).join('');
+}
+
+async function renderStats() {
+    statsContent.innerHTML = '<div class="stats-empty">Loading...</div>';
+    const log = await loadLog();
+
+    const dailyTotals = Object.entries(log)
+        .map(([date, entries]) => ({
+            date,
+            total: entries.reduce((s, e) => s + e.total, 0),
+            meals: entries.length
+        }))
+        .filter(d => d.total > 0)
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+    if (dailyTotals.length === 0) {
+        statsContent.innerHTML = '<div class="stats-empty">No data yet — start logging meals to see statistics.</div>';
+        return;
+    }
+
+    const avg     = Math.round(dailyTotals.reduce((s, d) => s + d.total, 0) / dailyTotals.length);
+    const highest = dailyTotals.reduce((m, d) => d.total > m.total ? d : m);
+    const lowest  = dailyTotals.reduce((m, d) => d.total < m.total ? d : m);
+    const streak  = calcStreak(dailyTotals.map(d => d.date));
+    const target  = settings.targetKcal || 0;
+    const mood    = target > 0 ? getMoodForAvg(avg, target) : null;
+
+    statsContent.innerHTML = `
+        <div class="stat-cards">
+            <div class="stat-card stat-card-avg">
+                <div class="stat-avg-main">
+                    <div class="stat-card-value">${avg.toLocaleString()}</div>
+                    <div class="stat-card-label">Avg kcal / day</div>
+                    <div class="stat-card-sub">${target > 0 ? `Target: ${target.toLocaleString()} kcal` : 'No target set'}</div>
+                </div>
+                ${mood ? `
+                <div class="stat-mood-block">
+                    <img class="stat-mood-icon" src="icons/moods/${mood.icon}" alt="${escapeHtml(mood.label)}" title="${escapeHtml(mood.label)}">
+                    <div class="stat-avg-mood-label">${escapeHtml(mood.label)}</div>
+                </div>` : ''}
+            </div>
+            <div class="stat-card">
+                <div class="stat-card-value">${dailyTotals.length}</div>
+                <div class="stat-card-label">Days logged</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-card-value">${highest.total.toLocaleString()}</div>
+                <div class="stat-card-label">Highest day</div>
+                <div class="stat-card-sub">${formatShortDate(highest.date)}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-card-value">${lowest.total.toLocaleString()}</div>
+                <div class="stat-card-label">Lowest day</div>
+                <div class="stat-card-sub">${formatShortDate(lowest.date)}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-card-value">${streak}</div>
+                <div class="stat-card-label">Day streak</div>
+            </div>
+        </div>
+
+        <div class="chart-card">
+            <h3>Last ${Math.min(dailyTotals.length, 14)} days</h3>
+            <div class="chart-wrap">${buildChart(dailyTotals, avg)}</div>
+        </div>
+
+        <div class="history-card">
+            <h3>All days</h3>
+            ${[...dailyTotals].reverse().map(d => `
+                <div class="history-row">
+                    <span class="history-date">${formatShortDate(d.date)}</span>
+                    <span class="history-meals">${d.meals} meal${d.meals !== 1 ? 's' : ''}</span>
+                    <span class="history-kcal">${d.total.toLocaleString()} kcal</span>
+                </div>
+            `).join('')}
+        </div>
+    `;
+
+}
+
+function getMoodForAvg(avg, target) {
+    const pct = Math.abs(avg - target) / target;
+    if (pct <= 0.05) return { icon: 'detective_01.png',          label: 'On target!' };
+    if (pct <= 0.15) return { icon: 'detective_02.png', label: 'Close to target' };
+    if (pct <= 0.30) return { icon: 'detective_03.png', label: 'Somewhat off target' };
+    if (pct <= 0.50) return { icon: 'detective_04.png',   label: 'Off target' };
+    return                   { icon: 'detective_05.png',            label: 'Far from target' };
+}
+
+function buildChart(dailyTotals, avg) {
+    const recent   = dailyTotals.slice(-14);
+    const svgW     = 540, svgH = 190;
+    const padL     = 8, padR = 8, padTop = 24, padBottom = 32;
+    const barAreaH = svgH - padTop - padBottom;
+    const barAreaW = svgW - padL - padR;
+    const slot     = barAreaW / recent.length;
+    const barW     = Math.max(Math.floor(slot * 0.6), 4);
+    const maxVal   = Math.max(...recent.map(d => d.total), avg * 1.1);
+    const avgY     = padTop + barAreaH - Math.round((avg / maxVal) * barAreaH);
+
+    const bars = recent.map((d, i) => {
+        const barH  = Math.max(Math.round((d.total / maxVal) * barAreaH), 2);
+        const x     = padL + i * slot + (slot - barW) / 2;
+        const y     = padTop + barAreaH - barH;
+        const label = `${parseInt(d.date.slice(8))}/${parseInt(d.date.slice(5, 7))}`;
+        const today = d.date === getTodayKey();
+        return `
+            <rect x="${x}" y="${y}" width="${barW}" height="${barH}" rx="0"
+                  fill="${today ? '#000080' : '#1084d0'}" opacity="${today ? 1 : 0.8}"/>
+            <text x="${x + barW / 2}" y="${y - 5}" text-anchor="middle" font-size="9"
+                  fill="var(--text-muted)" font-family="inherit">
+                ${d.total >= 1000 ? (Math.round(d.total / 100) / 10) + 'k' : d.total}
+            </text>
+            <text x="${x + barW / 2}" y="${svgH - padBottom + 14}" text-anchor="middle" font-size="9"
+                  fill="${today ? '#000080' : 'var(--text-muted)'}"
+                  font-weight="${today ? 600 : 400}" font-family="inherit">${label}</text>
+        `;
+    });
+
+    return `<svg viewBox="0 0 ${svgW} ${svgH}" style="width:100%;display:block;overflow:visible">
+        <line x1="${padL}" y1="${avgY}" x2="${svgW - padR}" y2="${avgY}"
+              stroke="var(--text-muted)" stroke-width="1" stroke-dasharray="4 3" opacity="0.5"/>
+        <text x="${svgW - padR - 2}" y="${avgY - 4}" text-anchor="end" font-size="8"
+              fill="var(--text-muted)" font-family="inherit">avg</text>
+        ${bars.join('')}
+    </svg>`;
+}
+
+// ── Helpers ──
+
+function calcStreak(sortedDates) {
+    if (!sortedDates.length) return 0;
+    const today     = getTodayKey();
+    const yesterday = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+    const last      = sortedDates[sortedDates.length - 1];
+    if (last !== today && last !== yesterday) return 0;
+
+    let streak = 1;
+    for (let i = sortedDates.length - 2; i >= 0; i--) {
+        const diff = (new Date(sortedDates[i + 1]) - new Date(sortedDates[i])) / 864e5;
+        if (diff === 1) streak++;
+        else break;
+    }
+    return streak;
+}
+
+function getTodayKey() {
+    return new Date().toISOString().slice(0, 10);
+}
+
+function setLoading(on) {
+    loadingEl.classList.toggle('hidden', !on);
+    logBtn.disabled = on;
+    voiceBtn.disabled = on;
 }
 
 function showError(msg) {
-    const el = document.createElement('div');
-    el.className = 'error-bubble';
-    el.textContent = msg;
-    messagesEl.appendChild(el);
-    scrollToBottom();
+    errorBanner.textContent = msg;
+    errorBanner.classList.remove('hidden');
 }
 
-function scrollToBottom() {
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+function clearError() {
+    errorBanner.textContent = '';
+    errorBanner.classList.add('hidden');
 }
 
-function setStatus(text) {
-    const statusEl = document.getElementById('status-text');
-    if (statusEl) statusEl.textContent = text;
+function formatDate(date) {
+    return date.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 }
 
-function setBusy(on) {
-    busy = on;
-    sendBtn.disabled = on;
-    userInputEl.disabled = on;
-    imageBtn.disabled = on;
-    setStatus(on ? 'Thinking...' : 'Ready');
+function formatShortDate(isoDate) {
+    const [y, m, d] = isoDate.split('-');
+    return new Date(y, m - 1, d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
-
-// ── Markdown parser ──
-
-function parseMarkdown(text) {
-    const blocks = [];
-    text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, _lang, code) => {
-        const i = blocks.length;
-        blocks.push(`<pre><code>${escapeHtml(code.trim())}</code></pre>`);
-        return `\x00BLOCK${i}\x00`;
-    });
-
-    text = text.replace(/`([^`]+)`/g, (_, c) => `<code>${escapeHtml(c)}</code>`);
-
-    text = text.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
-    text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
-
-    text = text.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-    text = text.replace(/^## (.+)$/gm,  '<h2>$1</h2>');
-    text = text.replace(/^# (.+)$/gm,   '<h1>$1</h1>');
-
-    text = text.replace(/((?:^[ \t]*[-*+] .+\n?)+)/gm, match => {
-        const items = match.trim().split('\n').map(l => `<li>${l.replace(/^[ \t]*[-*+] /, '')}</li>`).join('');
-        return `<ul>${items}</ul>`;
-    });
-
-    text = text.replace(/((?:^[ \t]*\d+\. .+\n?)+)/gm, match => {
-        const items = match.trim().split('\n').map(l => `<li>${l.replace(/^[ \t]*\d+\. /, '')}</li>`).join('');
-        return `<ol>${items}</ol>`;
-    });
-
-    const parts = text.split(/\n{2,}/);
-    text = parts.map(part => {
-        part = part.trim();
-        if (!part) return '';
-        if (/^\x00BLOCK|^<(h[1-3]|ul|ol|pre)/.test(part)) return part;
-        return `<p>${part.replace(/\n/g, '<br>')}</p>`;
-    }).join('');
-
-    text = text.replace(/\x00BLOCK(\d+)\x00/g, (_, i) => blocks[Number(i)]);
-
-    return text;
-}
-
-// ── Utils ──
 
 function escapeHtml(str) {
     return String(str)
